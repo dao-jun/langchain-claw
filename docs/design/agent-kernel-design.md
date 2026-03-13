@@ -1,8 +1,9 @@
 # Agent内核系统设计方案
 
-> 版本: 1.0
+> 版本: 1.1
 > 日期: 2026-03-13
-> 状态: 待审阅
+> 状态: 已批准，开始实施
+> 更新: 根据设计审查反馈，增加了安全沙箱、Session并发控制、健康检查等关键功能
 
 ## 1. 背景
 
@@ -696,7 +697,104 @@ public class SkillToggleService {
 }
 ```
 
-### 4.8 多环境持久化策略
+### 4.8 Skill安全沙箱（关键安全功能）
+
+**设计目标：** 防止恶意Skill攻击系统、泄露数据或耗尽资源。
+
+```java
+public class SkillSandbox {
+    private final SecurityManager securityManager;
+    private final ResourceLimiter resourceLimiter;
+    private final Set<String> allowedClasses;
+
+    // 资源限制配置
+    public static class ResourceLimits {
+        private long maxMemoryMB = 256;      // 最大内存
+        private long maxCpuTimeMs = 30000;    // 最大CPU时间
+        private int maxThreads = 10;          // 最大线程数
+        private long maxNetworkBytes = 10 * 1024 * 1024; // 最大网络流量
+    }
+
+    // 在沙箱中执行Skill Tool
+    public <T> T executeInSandbox(Skill skill, Tool tool, Map<String, Object> args,
+                                   Supplier<T> action) {
+        // 1. 验证权限
+        validatePermissions(skill.getMetadata().getPermissions());
+
+        // 2. 设置资源限制
+        ResourceLimits limits = resolveLimits(skill);
+        ResourceToken token = resourceLimiter.acquire(limits);
+
+        // 3. 在隔离环境中执行
+        try {
+            // 使用自定义ClassLoader隔离
+            ClassLoader originalLoader = Thread.currentThread().getContextClassLoader();
+            Thread.currentThread().setContextClassLoader(skill.getClass().getClassLoader());
+
+            try {
+                return action.get();
+            } finally {
+                Thread.currentThread().setContextClassLoader(originalLoader);
+            }
+        } catch (OutOfMemoryError e) {
+            throw new SkillResourceExhaustedException("Memory limit exceeded");
+        } catch (Throwable t) {
+            throw new SkillExecutionException("Skill execution failed", t);
+        } finally {
+            resourceLimiter.release(token);
+        }
+    }
+
+    private void validatePermissions(SkillPermissions permissions) {
+        // 检查网络权限
+        if (permissions.isNetworkAccess() && !networkAllowedGlobally) {
+            throw new SkillSecurityException("Network access not allowed");
+        }
+        // 检查文件系统权限
+        if (permissions.isFilesystemAccess()) {
+            validateAllowedPaths(permissions.getAllowedPaths());
+        }
+    }
+}
+
+// 资源限制器
+public class ResourceLimiter {
+    private final Map<String, ResourceUsage> userUsage = new ConcurrentHashMap<>();
+
+    public ResourceToken acquire(ResourceLimits limits) {
+        // 使用Java 21的虚拟线程和内存限制
+        return new ResourceToken(limits, Thread.currentThread());
+    }
+
+    public void release(ResourceToken token) {
+        // 释放资源配额
+    }
+}
+```
+
+**安全策略配置：**
+```yaml
+skill:
+  security:
+    # 全局安全设置
+    sandbox_enabled: true
+    allow_network: false              # 默认禁止网络
+    allow_filesystem: false           # 默认禁止文件系统
+
+    # 资源限制
+    limits:
+      default:
+        max_memory_mb: 256
+        max_cpu_time_ms: 30000
+        max_threads: 10
+
+      # 内置Skill可以有更高权限
+      builtin:
+        max_memory_mb: 512
+        allow_network: true
+```
+
+### 4.9 多环境持久化策略
 
 **配置化存储策略：**
 ```yaml
@@ -1200,7 +1298,138 @@ public class VirtualThreadExecutor {
 }
 ```
 
-### 6.9 用户级别限流
+### 6.9 Session级别并发控制（关键改进）
+
+**设计目标：** 同一Session的请求串行执行，防止状态冲突；不同Session可以并行。
+
+```java
+public class SessionConcurrencyControl {
+    // 每个Session一个信号量，保证同一Session串行执行
+    private final Map<String, Semaphore> sessionLocks = new ConcurrentHashMap<>();
+    private final ExecutorService virtualThreadExecutor;
+
+    public SessionConcurrencyControl() {
+        this.virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    }
+
+    // 在Session上下文中执行任务（串行）
+    public <T> CompletableFuture<T> executeInSession(
+            String sessionId,
+            Callable<T> task) {
+
+        Semaphore lock = sessionLocks.computeIfAbsent(
+            sessionId,
+            k -> new Semaphore(1)  // 每个Session只能有1个并发请求
+        );
+
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                // 获取Session锁
+                lock.acquire();
+
+                // 执行任务
+                return task.call();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new CompletionException(e);
+            } catch (Exception e) {
+                throw new CompletionException(e);
+            } finally {
+                lock.release();
+            }
+        }, virtualThreadExecutor);
+    }
+
+    // 带超时的Session执行
+    public <T> CompletableFuture<T> executeInSessionWithTimeout(
+            String sessionId,
+            Callable<T> task,
+            Duration timeout) {
+
+        return executeInSession(sessionId, task)
+            .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    // 清理已关闭Session的锁
+    public void cleanupSession(String sessionId) {
+        Semaphore lock = sessionLocks.remove(sessionId);
+        if (lock != null) {
+            lock.drainPermits(); // 释放所有等待的请求
+        }
+    }
+
+    // 获取Session当前状态
+    public SessionConcurrencyState getSessionState(String sessionId) {
+        Semaphore lock = sessionLocks.get(sessionId);
+        if (lock == null) {
+            return SessionConcurrencyState.IDLE;
+        }
+        return lock.availablePermits() > 0
+            ? SessionConcurrencyState.IDLE
+            : SessionConcurrencyState.PROCESSING;
+    }
+}
+
+public enum SessionConcurrencyState {
+    IDLE,           // 空闲，可以接受新请求
+    PROCESSING,     // 正在处理请求
+    WAITING         // 有等待中的请求
+}
+```
+
+**在Controller中使用：**
+```java
+@RestController
+@RequestMapping("/api/v1/chat")
+public class ChatController {
+    private final SessionConcurrencyControl concurrencyControl;
+    private final AgentOrchestrator orchestrator;
+
+    @PostMapping
+    public CompletableFuture<ChatResponse> chat(
+            @RequestHeader("X-User-Id") String userId,
+            @RequestBody ChatRequest request) {
+
+        String sessionId = request.getSessionId();
+
+        return concurrencyControl.executeInSessionWithTimeout(
+            sessionId,
+            () -> {
+                UserSession session = sessionManager.getOrCreate(userId, sessionId);
+                return orchestrator.process(session, request.getMessage());
+            },
+            Duration.ofSeconds(60)  // 60秒超时
+        ).exceptionally(e -> {
+            if (e instanceof TimeoutException) {
+                return ChatResponse.timeout("请求处理超时");
+            }
+            return ChatResponse.error(e.getMessage());
+        });
+    }
+}
+```
+
+```java
+public class VirtualThreadExecutor {
+    private final ExecutorService virtualThreadExecutor;
+
+    public VirtualThreadExecutor() {
+        this.virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    }
+
+    public <T> CompletableFuture<T> submitAgentTask(AgentTask<T> task) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return task.execute();
+            } catch (Exception e) {
+                throw new CompletionException(e);
+            }
+        }, virtualThreadExecutor);
+    }
+}
+```
+
+### 6.10 用户级别限流
 
 ```java
 public class UserRateLimiter {
@@ -1216,7 +1445,261 @@ public class UserRateLimiter {
 }
 ```
 
-### 6.10 Session配置
+### 6.11 健康检查（生产必备）
+
+```java
+@RestController
+@RequestMapping("/actuator")
+public class HealthController {
+
+    private final DataSource dataSource;
+    private final SkillManager skillManager;
+    private final SessionManager sessionManager;
+    private final ChatLanguageModel llm;
+
+    @GetMapping("/health")
+    public HealthStatus health() {
+        return HealthStatus.builder()
+            .status(checkOverallStatus())
+            .database(checkDatabase())
+            .llm(checkLLM())
+            .skills(checkSkills())
+            .sessions(checkSessions())
+            .memory(checkMemory())
+            .timestamp(Instant.now())
+            .build();
+    }
+
+    @GetMapping("/health/live")
+    public HealthStatus liveness() {
+        // K8s存活探针：进程是否存活
+        return HealthStatus.alive();
+    }
+
+    @GetMapping("/health/ready")
+    public HealthStatus readiness() {
+        // K8s就绪探针：是否可以接收流量
+        boolean dbReady = checkDatabase().isHealthy();
+        boolean llmReady = checkLLM().isHealthy();
+
+        return dbReady && llmReady
+            ? HealthStatus.ready()
+            : HealthStatus.notReady();
+    }
+
+    private ComponentHealth checkDatabase() {
+        try (Connection conn = dataSource.getConnection()) {
+            boolean valid = conn.isValid(5);
+            return ComponentHealth.builder()
+                .name("database")
+                .healthy(valid)
+                .details(Map.of(
+                    "url", conn.getMetaData().getURL()
+                ))
+                .build();
+        } catch (Exception e) {
+            return ComponentHealth.unhealthy("database", e.getMessage());
+        }
+    }
+
+    private ComponentHealth checkLLM() {
+        try {
+            // 简单的健康检查：发送一个最小请求
+            String response = llm.generate("ping");
+            return ComponentHealth.healthy("llm", Map.of("response", "ok"));
+        } catch (Exception e) {
+            return ComponentHealth.unhealthy("llm", e.getMessage());
+        }
+    }
+
+    private ComponentHealth checkSkills() {
+        int builtinCount = skillManager.getBuiltinSkillCount();
+        return ComponentHealth.healthy("skills", Map.of(
+            "builtin_count", builtinCount
+        ));
+    }
+
+    private ComponentHealth checkSessions() {
+        int activeCount = sessionManager.getActiveSessionCount();
+        return ComponentHealth.healthy("sessions", Map.of(
+            "active_count", activeCount
+        ));
+    }
+
+    private ComponentHealth checkMemory() {
+        Runtime runtime = Runtime.getRuntime();
+        long usedMB = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024;
+        long maxMB = runtime.maxMemory() / 1024 / 1024;
+        double usedPercent = (double) usedMB / maxMB * 100;
+
+        return ComponentHealth.builder()
+            .name("memory")
+            .healthy(usedPercent < 90)  // 内存使用超过90%为不健康
+            .details(Map.of(
+                "used_mb", usedMB,
+                "max_mb", maxMB,
+                "used_percent", String.format("%.1f%%", usedPercent)
+            ))
+            .build();
+    }
+}
+
+public class HealthStatus {
+    private String status;  // "UP", "DOWN", "UNKNOWN"
+    private List<ComponentHealth> components;
+    private Instant timestamp;
+}
+
+public class ComponentHealth {
+    private String name;
+    private boolean healthy;
+    private String error;
+    private Map<String, Object> details;
+}
+```
+
+### 6.12 优雅关闭（生产必备）
+
+```java
+@Component
+public class GracefulShutdown {
+
+    private static final Logger log = LoggerFactory.getLogger(GracefulShutdown.class);
+
+    private final SessionManager sessionManager;
+    private final SessionSnapshotService snapshotService;
+    private final DataSource dataSource;
+    private final ExecutorService executorService;
+
+    // 关闭标志
+    private volatile boolean shuttingDown = false;
+
+    // 注册关闭钩子
+    @PostConstruct
+    public void registerShutdownHook() {
+        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "shutdown-hook"));
+    }
+
+    // 检查是否正在关闭
+    public boolean isShuttingDown() {
+        return shuttingDown;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("开始优雅关闭...");
+
+        // 1. 标记正在关闭，拒绝新请求
+        shuttingDown = true;
+        log.info("步骤1: 已标记关闭状态，拒绝新请求");
+
+        // 2. 等待现有请求完成（最多等待30秒）
+        waitForPendingRequests(Duration.ofSeconds(30));
+        log.info("步骤2: 现有请求处理完成");
+
+        // 3. 保存所有活跃Session快照
+        saveSessionSnapshots();
+        log.info("步骤3: Session快照已保存");
+
+        // 4. 关闭ExecutorService
+        shutdownExecutor();
+        log.info("步骤4: Executor已关闭");
+
+        // 5. 关闭数据库连接池
+        closeDatabase();
+        log.info("步骤5: 数据库连接已关闭");
+
+        log.info("优雅关闭完成");
+    }
+
+    private void waitForPendingRequests(Duration timeout) {
+        long startTime = System.currentTimeMillis();
+
+        while (System.currentTimeMillis() - startTime < timeout.toMillis()) {
+            int pendingCount = sessionManager.getPendingRequestCount();
+            if (pendingCount == 0) {
+                return;
+            }
+
+            log.info("等待 {} 个请求完成...", pendingCount);
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        log.warn("等待超时，仍有 {} 个请求未完成",
+                 sessionManager.getPendingRequestCount());
+    }
+
+    private void saveSessionSnapshots() {
+        List<UserSession> activeSessions = sessionManager.getActiveSessions();
+
+        for (UserSession session : activeSessions) {
+            try {
+                snapshotService.createSnapshot(
+                    session.getSessionId(),
+                    SnapshotType.SHUTDOWN,
+                    "关闭前自动保存"
+                );
+            } catch (Exception e) {
+                log.error("保存Session快照失败: {}", session.getSessionId(), e);
+            }
+        }
+    }
+
+    private void shutdownExecutor() {
+        executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(10, TimeUnit.SECONDS)) {
+                executorService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executorService.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void closeDatabase() {
+        if (dataSource instanceof HikariDataSource hikari) {
+            hikari.close();
+        }
+    }
+}
+
+// 在Controller中检查关闭状态
+@RestController
+@RequestMapping("/api/v1")
+public class BaseController {
+
+    @Autowired
+    private GracefulShutdown gracefulShutdown;
+
+    protected void checkNotShuttingDown() {
+        if (gracefulShutdown.isShuttingDown()) {
+            throw new ServiceUnavailableException("服务正在关闭，请稍后重试");
+        }
+    }
+}
+```
+
+```java
+public class UserRateLimiter {
+    private final Map<String, RateLimiter> userLimiters = new ConcurrentHashMap<>();
+
+    public boolean tryAcquire(String userId) {
+        RateLimiter limiter = userLimiters.computeIfAbsent(
+            userId,
+            k -> RateLimiter.create(1.0)  // 1请求/秒
+        );
+        return limiter.tryAcquire();
+    }
+}
+```
+
+### 6.13 Session配置
 
 ```yaml
 session:
@@ -1293,38 +1776,51 @@ public class WeatherSkill implements Skill {
 
 ## 8. 实现计划
 
-### 8.1 分阶段实现
+### 8.1 分阶段实现（修订版：基于审查反馈）
 
 **Phase 1: 核心框架重构（第1-2周）**
-- 重构项目结构
-- 引入依赖注入
-- 实现Agent接口增强
-- 实现AgentRegistry
+- 重构项目结构（模块化）
+- 引入Spring Boot依赖注入
+- 实现Agent接口增强（生命周期、能力声明）
+- 实现AgentRegistry和ExecutorAgentRegistry
+- **新增：** 实现健康检查端点
+- **新增：** 实现优雅关闭机制
 
 **Phase 2: Skills系统（第3-4周）**
-- 实现Skill接口和配置解析
-- 实现SkillManager和Registry
-- 实现用户隔离ClassLoader
-- 实现远程安装
-- 实现元数据持久化
+- 实现Skill接口和skill.yaml解析
+- 实现SkillManager和SkillRegistry
+- 实现IsolatedClassLoader（用户隔离）
+- **新增：** 实现Skill安全沙箱
+- 实现本地Skill安装
+- 实现元数据持久化（PostgreSQL）
+- 实现Enable/Disable功能
 
 **Phase 3: Memory系统（第5-6周）**
 - 实现MemoryManager接口
-- 实现PostgresEmbeddingStore
+- 实现PostgresEmbeddingStore（pgvector）
 - 实现LLMMemoryExtractor
-- 实现记忆去重和清理
+- 实现记忆去重和过期清理
+- **新增：** 实现记忆时间衰减
 
 **Phase 4: Session管理（第7-8周）**
-- 实现SessionStore
+- 实现SessionStore（PostgreSQL）
 - 实现SessionLifecycleManager
-- 实现快照、分支、共享功能
+- **新增：** 实现Session并发控制
+- 实现Session快照与恢复
 - 实现审计日志
 
 **Phase 5: 并发与API（第9-10周）**
 - 实现虚拟线程执行器
-- 实现用户限流
+- 实现用户级别限流
 - 实现REST API
 - 集成测试和性能测试
+
+**Phase 6: 远程Skill仓库（第11-12周，可选）**
+- 实现GitHub Skill仓库
+- 实现ClawHub Skill仓库
+- 实现Skill签名验证
+
+**总计：10-12周**
 
 ### 8.2 依赖添加（pom.xml）
 
