@@ -77,4 +77,22 @@ class ApiIntegrationTest {
             .andExpect(jsonPath("$.state").value("COMPLETED"))
             .andExpect(jsonPath("$.message").value(containsString("24")));
     }
+
+    @Test
+    void shouldExposeStructuredChainPlanInChatResponse() throws Exception {
+        mockMvc.perform(post("/api/v1/chat")
+                .header("X-User-Id", "api-user-3")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "message": "请查询北京和上海天气，并计算平均温度"
+                    }
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("COMPLETED"))
+            .andExpect(jsonPath("$.plan.steps[0].stepId").value("weather-1"))
+            .andExpect(jsonPath("$.plan.steps[2].dependsOn[0]").value("weather-1"))
+            .andExpect(jsonPath("$.plan.steps[2].output.numericValue").value(25.0))
+            .andExpect(jsonPath("$.stepOutputs[2]").value(containsString("= 25")));
+    }
 }

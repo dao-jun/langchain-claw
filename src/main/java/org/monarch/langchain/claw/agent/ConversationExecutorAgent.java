@@ -1,9 +1,9 @@
 package org.monarch.langchain.claw.agent;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import org.monarch.langchain.claw.audit.ToolCallContext;
-import org.monarch.langchain.claw.common.Plan;
 import org.monarch.langchain.claw.common.PlanStep;
 import org.monarch.langchain.claw.memory.MemorySnippet;
 import org.monarch.langchain.claw.skill.SkillDefinition;
@@ -16,9 +16,11 @@ import org.springframework.stereotype.Component;
 public class ConversationExecutorAgent implements ExecutorAgent {
 
     private final ToolRegistry toolRegistry;
+    private final StepResultMapper stepResultMapper;
 
-    public ConversationExecutorAgent(ToolRegistry toolRegistry) {
+    public ConversationExecutorAgent(ToolRegistry toolRegistry, StepResultMapper stepResultMapper) {
         this.toolRegistry = toolRegistry;
+        this.stepResultMapper = stepResultMapper;
     }
 
     @Override
@@ -32,19 +34,23 @@ public class ConversationExecutorAgent implements ExecutorAgent {
     }
 
     @Override
-    public List<String> executePlan(AgentContext context, Plan plan) {
-        PlanStep step = plan.getSteps().get(0);
-        HashMap<String, Object> input = new HashMap<>(step.getParameters());
-        input.put("message", context.getUserMessage());
+    public StepExecutionResult executeStep(AgentContext context, PlanStep step, StepExecutionContext stepContext) {
+        HashMap<String, Object> input = new HashMap<>(stepContext.getResolvedParameters());
+        input.putIfAbsent("message", context.getUserMessage());
         input.put("memories", context.getLongTermMemories().stream().map(MemorySnippet::content).toList());
-        input.put("priorStepOutputs", step.getParameters().getOrDefault("priorStepOutputs", List.of()));
+        input.put("priorStepOutputs", stepContext.getPriorStepOutputs());
+        input.put("dependencyStepOutputs", stepContext.getDependencyStepOutputs());
+        input.put("dependencyOutputs", new LinkedHashMap<>(stepContext.getDependencyOutputs()));
         input.put("prompt", resolvePrompt(context.getActiveSkills(), step));
         String output = toolRegistry.execute(
             step.getExecutorType(),
             input,
             new ToolCallContext(context.getUserId(), context.getSessionId(), context.getRequestId(), context.getTraceId()));
+        step.setParameters(input);
         step.setResult(output);
-        return List.of(output);
+        step.setError(null);
+        step.setOutput(stepResultMapper.map(step, input, output));
+        return new StepExecutionResult(output, step.getOutput());
     }
 
     @Override

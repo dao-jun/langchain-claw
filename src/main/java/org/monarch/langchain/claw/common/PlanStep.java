@@ -7,12 +7,25 @@ import java.util.Map;
 
 public class PlanStep {
 
+    private String stepId;
     private String description;
     private String executorType;
     private List<String> requiredSkills = new ArrayList<>();
+    private List<String> dependsOn = new ArrayList<>();
     private Map<String, Object> parameters = new HashMap<>();
+    private Map<String, String> inputBindings = new HashMap<>();
+    private Map<String, Object> output = new HashMap<>();
+    private PlanStepStatus status = PlanStepStatus.PENDING;
     private String result;
     private String error;
+
+    public String getStepId() {
+        return stepId;
+    }
+
+    public void setStepId(String stepId) {
+        this.stepId = stepId;
+    }
 
     public String getDescription() {
         return description;
@@ -38,12 +51,44 @@ public class PlanStep {
         this.requiredSkills = requiredSkills;
     }
 
+    public List<String> getDependsOn() {
+        return dependsOn;
+    }
+
+    public void setDependsOn(List<String> dependsOn) {
+        this.dependsOn = dependsOn;
+    }
+
     public Map<String, Object> getParameters() {
         return parameters;
     }
 
     public void setParameters(Map<String, Object> parameters) {
         this.parameters = parameters;
+    }
+
+    public Map<String, String> getInputBindings() {
+        return inputBindings;
+    }
+
+    public void setInputBindings(Map<String, String> inputBindings) {
+        this.inputBindings = inputBindings;
+    }
+
+    public Map<String, Object> getOutput() {
+        return output;
+    }
+
+    public void setOutput(Map<String, Object> output) {
+        this.output = output;
+    }
+
+    public PlanStepStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(PlanStepStatus status) {
+        this.status = status;
     }
 
     public String getResult() {

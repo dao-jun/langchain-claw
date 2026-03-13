@@ -67,4 +67,36 @@ class AgentOrchestratorTest {
         assertThat(result.getStepOutputs().get(0)).isEqualTo("9*(2+1) = 27");
         assertThat(result.getStepOutputs().get(1)).contains("基于已完成步骤结果：9*(2+1) = 27");
     }
+
+    @Test
+    void shouldExecuteDependencyBoundAverageTemperatureWorkflow() {
+        AgentExecutionResult result = orchestrator.process("user-f", null, "请查询北京和上海天气，并计算平均温度");
+
+        assertThat(result.getNextState()).isEqualTo(SessionState.COMPLETED);
+        assertThat(result.getPlan().getSteps()).hasSize(3);
+        assertThat(result.getPlan().getSteps()).extracting("stepId").containsExactly("weather-1", "weather-2", "calculator-1");
+        assertThat(result.getPlan().getSteps().get(2).getDependsOn()).containsExactly("weather-1", "weather-2");
+        assertThat(result.getPlan().getSteps().get(2).getInputBindings()).containsEntry("expression", "(${weather-1.temperatureC} + ${weather-2.temperatureC}) / 2");
+        assertThat(result.getPlan().getSteps().get(0).getOutput()).containsEntry("temperatureC", 25.0d);
+        assertThat(result.getPlan().getSteps().get(1).getOutput()).containsEntry("temperatureC", 25.0d);
+        assertThat(result.getPlan().getSteps().get(2).getOutput()).containsEntry("numericValue", 25.0d);
+        assertThat(result.getStepOutputs()).containsExactly(
+            "北京 当前天气：晴，25°C（演示数据，可替换为真实天气 API）",
+            "上海 当前天气：晴，25°C（演示数据，可替换为真实天气 API）",
+            "(25.0 + 25.0) / 2 = 25");
+    }
+
+    @Test
+    void shouldUseDependencyOutputsInConversationAfterAverageTemperatureWorkflow() {
+        AgentExecutionResult result = orchestrator.process("user-g", null, "请查询北京和上海天气，计算平均温度，并总结一下");
+
+        assertThat(result.getNextState()).isEqualTo(SessionState.COMPLETED);
+        assertThat(result.getPlan().getSteps()).hasSize(4);
+        assertThat(result.getPlan().getSteps()).extracting("executorType")
+            .containsExactly("weather", "weather", "calculator", "conversation");
+        assertThat(result.getPlan().getSteps().get(3).getDependsOn())
+            .containsExactly("weather-1", "weather-2", "calculator-1");
+        assertThat(result.getStepOutputs().get(3)).contains("基于已完成步骤结果：");
+        assertThat(result.getStepOutputs().get(3)).contains("(25.0 + 25.0) / 2 = 25");
+    }
 }

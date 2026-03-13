@@ -1,9 +1,7 @@
 package org.monarch.langchain.claw.agent;
 
 import java.util.HashMap;
-import java.util.List;
 import org.monarch.langchain.claw.audit.ToolCallContext;
-import org.monarch.langchain.claw.common.Plan;
 import org.monarch.langchain.claw.common.PlanStep;
 import org.monarch.langchain.claw.tool.ToolRegistry;
 import org.springframework.core.annotation.Order;
@@ -14,9 +12,11 @@ import org.springframework.stereotype.Component;
 public class ToolDelegatingExecutorAgent implements ExecutorAgent {
 
     private final ToolRegistry toolRegistry;
+    private final StepResultMapper stepResultMapper;
 
-    public ToolDelegatingExecutorAgent(ToolRegistry toolRegistry) {
+    public ToolDelegatingExecutorAgent(ToolRegistry toolRegistry, StepResultMapper stepResultMapper) {
         this.toolRegistry = toolRegistry;
+        this.stepResultMapper = stepResultMapper;
     }
 
     @Override
@@ -30,14 +30,17 @@ public class ToolDelegatingExecutorAgent implements ExecutorAgent {
     }
 
     @Override
-    public List<String> executePlan(AgentContext context, Plan plan) {
-        PlanStep step = plan.getSteps().get(0);
+    public StepExecutionResult executeStep(AgentContext context, PlanStep step, StepExecutionContext stepContext) {
+        HashMap<String, Object> input = new HashMap<>(stepContext.getResolvedParameters());
         String output = toolRegistry.execute(
             step.getExecutorType(),
-            new HashMap<>(step.getParameters()),
+            input,
             new ToolCallContext(context.getUserId(), context.getSessionId(), context.getRequestId(), context.getTraceId()));
+        step.setParameters(input);
         step.setResult(output);
-        return List.of(output);
+        step.setError(null);
+        step.setOutput(stepResultMapper.map(step, input, output));
+        return new StepExecutionResult(output, step.getOutput());
     }
 
     @Override

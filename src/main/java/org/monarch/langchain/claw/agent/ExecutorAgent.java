@@ -1,13 +1,28 @@
 package org.monarch.langchain.claw.agent;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import org.monarch.langchain.claw.common.Plan;
+import org.monarch.langchain.claw.common.PlanStep;
 import org.monarch.langchain.claw.common.SessionState;
 
 public interface ExecutorAgent extends Agent {
 
-    List<String> executePlan(AgentContext context, Plan plan);
+    StepExecutionResult executeStep(AgentContext context, PlanStep step, StepExecutionContext stepContext);
+
+    default List<String> executePlan(AgentContext context, org.monarch.langchain.claw.common.Plan plan) {
+        List<String> outputs = new ArrayList<>();
+        for (PlanStep step : plan.getSteps()) {
+            StepExecutionResult result = executeStep(
+                context,
+                step,
+                new StepExecutionContext(step.getParameters(), List.of(), List.of(), java.util.Map.of()));
+            if (result.getOutputText() != null && !result.getOutputText().isBlank()) {
+                outputs.add(result.getOutputText());
+            }
+        }
+        return outputs;
+    }
 
     boolean supports(String executorType);
 
@@ -28,7 +43,16 @@ public interface ExecutorAgent extends Agent {
     @Override
     default CompletableFuture<AgentExecutionResult> execute(AgentContext context) {
         return CompletableFuture.supplyAsync(() -> {
-            List<String> outputs = executePlan(context, context.getPlan());
+            List<String> outputs = new ArrayList<>();
+            for (PlanStep step : context.getPlan().getSteps()) {
+                StepExecutionResult stepResult = executeStep(
+                    context,
+                    step,
+                    new StepExecutionContext(step.getParameters(), List.of(), List.of(), java.util.Map.of()));
+                if (stepResult.getOutputText() != null && !stepResult.getOutputText().isBlank()) {
+                    outputs.add(stepResult.getOutputText());
+                }
+            }
             AgentExecutionResult result = new AgentExecutionResult();
             result.setSessionId(context.getSessionId());
             result.setPlan(context.getPlan());

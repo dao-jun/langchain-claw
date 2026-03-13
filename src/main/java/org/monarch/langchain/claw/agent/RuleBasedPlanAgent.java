@@ -41,30 +41,38 @@ public class RuleBasedPlanAgent implements PlanAgent {
         Plan plan = new Plan();
         List<PlanStep> steps = new ArrayList<>();
         plan.setRationale("根据用户消息拆分为可执行步骤，并结合可用 skills 与模型配置进行执行。");
+        int calculatorIndex = 1;
+        int weatherIndex = 1;
+        int conversationIndex = 1;
 
         if (containsCalculationIntent(message)) {
-            PlanStep calculator = new PlanStep();
-            calculator.setDescription("执行计算任务");
-            calculator.setExecutorType("calculator");
-            calculator.setRequiredSkills(List.of("calculator"));
-            calculator.setParameters(new HashMap<>());
-            calculator.getParameters().put("expression", extractExpression(message));
+            PlanStep calculator = createCalculatorStep("执行计算任务", "calculator-" + calculatorIndex++, extractExpression(message));
             steps.add(calculator);
         }
 
+        List<PlanStep> weatherSteps = new ArrayList<>();
         if (containsWeatherIntent(message)) {
             List<String> cities = extractCities(message);
             if (cities.isEmpty()) {
-                steps.add(createWeatherStep(""));
+                PlanStep weather = createWeatherStep("", "weather-" + weatherIndex++);
+                steps.add(weather);
+                weatherSteps.add(weather);
             } else {
-                cities.stream()
-                    .map(this::createWeatherStep)
-                    .forEach(steps::add);
+                for (String city : cities) {
+                    PlanStep weather = createWeatherStep(city, "weather-" + weatherIndex++);
+                    steps.add(weather);
+                    weatherSteps.add(weather);
+                }
             }
         }
 
+        if (shouldAddAverageTemperatureStep(message, weatherSteps)) {
+            steps.add(createAverageTemperatureStep(weatherSteps, "calculator-" + calculatorIndex++));
+        }
+
         if (steps.isEmpty() || shouldAddConversationStep(message, steps)) {
-            steps.add(createConversationStep(message));
+            steps.add(createConversationStep(message, "conversation-" + conversationIndex++,
+                steps.stream().map(PlanStep::getStepId).toList()));
         }
 
         plan.setSteps(steps);
@@ -99,7 +107,10 @@ public class RuleBasedPlanAgent implements PlanAgent {
     }
 
     private boolean containsCalculationIntent(String message) {
-        return message.contains("计算") || message.toLowerCase().contains("calculate") || message.matches(".*[0-9]+\\s*[+\\-*/].*");
+        String expression = extractExpression(message);
+        return message.toLowerCase().contains("calculate")
+            || message.matches(".*[0-9]+\\s*[+\\-*/].*")
+            || (message.contains("计算") && isCalculableExpression(expression));
     }
 
     private boolean containsWeatherIntent(String message) {
@@ -150,8 +161,17 @@ public class RuleBasedPlanAgent implements PlanAgent {
         return !existingSteps.isEmpty() && CONVERSATION_CUES.stream().anyMatch(message::contains);
     }
 
-    private PlanStep createWeatherStep(String city) {
+    private boolean shouldAddAverageTemperatureStep(String message, List<PlanStep> weatherSteps) {
+        return weatherSteps.size() >= 2
+            && (message.contains("平均温度")
+                || message.contains("平均气温")
+                || message.contains("平均一下")
+                || message.toLowerCase().contains("average temperature"));
+    }
+
+    private PlanStep createWeatherStep(String city, String stepId) {
         PlanStep weather = new PlanStep();
+        weather.setStepId(stepId);
         weather.setDescription(city.isBlank() ? "查询天气" : "查询" + city + "天气");
         weather.setExecutorType("weather");
         weather.setRequiredSkills(List.of("weather"));
@@ -160,11 +180,37 @@ public class RuleBasedPlanAgent implements PlanAgent {
         return weather;
     }
 
-    private PlanStep createConversationStep(String message) {
+    private PlanStep createCalculatorStep(String description, String stepId, String expression) {
+        PlanStep calculator = new PlanStep();
+        calculator.setStepId(stepId);
+        calculator.setDescription(description);
+        calculator.setExecutorType("calculator");
+        calculator.setRequiredSkills(List.of("calculator"));
+        calculator.setParameters(new HashMap<>());
+        calculator.getParameters().put("expression", expression);
+        return calculator;
+    }
+
+    private PlanStep createAverageTemperatureStep(List<PlanStep> weatherSteps, String stepId) {
+        String expressionTemplate = weatherSteps.stream()
+            .map(step -> "${" + step.getStepId() + ".temperatureC}")
+            .reduce((left, right) -> left + " + " + right)
+            .map(sum -> "(" + sum + ") / " + weatherSteps.size())
+            .orElse("0");
+        PlanStep calculator = createCalculatorStep("计算多城市平均温度", stepId, "0");
+        calculator.setDependsOn(weatherSteps.stream().map(PlanStep::getStepId).toList());
+        calculator.setInputBindings(new HashMap<>());
+        calculator.getInputBindings().put("expression", expressionTemplate);
+        return calculator;
+    }
+
+    private PlanStep createConversationStep(String message, String stepId, List<String> dependsOn) {
         PlanStep conversation = new PlanStep();
+        conversation.setStepId(stepId);
         conversation.setDescription("进行通用对话响应");
         conversation.setExecutorType("conversation");
         conversation.setRequiredSkills(List.of("conversation"));
+        conversation.setDependsOn(new ArrayList<>(dependsOn));
         conversation.setParameters(new HashMap<>());
         conversation.getParameters().put("message", message);
         return conversation;
