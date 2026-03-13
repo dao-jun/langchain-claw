@@ -18,6 +18,10 @@ public class PlanStep {
     private PlanStepStatus status = PlanStepStatus.PENDING;
     private String result;
     private String error;
+    private int retryCount;
+    private Integer maxRetries;
+    private PlanStep fallbackStep;
+    private List<PlanStep> compensationSteps = new ArrayList<>();
 
     public String getStepId() {
         return stepId;
@@ -105,5 +109,37 @@ public class PlanStep {
 
     public void setError(String error) {
         this.error = error;
+    }
+
+    public int getRetryCount() {
+        return retryCount;
+    }
+
+    public void setRetryCount(int retryCount) {
+        this.retryCount = retryCount;
+    }
+
+    public Integer getMaxRetries() {
+        return maxRetries;
+    }
+
+    public void setMaxRetries(Integer maxRetries) {
+        this.maxRetries = maxRetries;
+    }
+
+    public PlanStep getFallbackStep() {
+        return fallbackStep;
+    }
+
+    public void setFallbackStep(PlanStep fallbackStep) {
+        this.fallbackStep = fallbackStep;
+    }
+
+    public List<PlanStep> getCompensationSteps() {
+        return compensationSteps;
+    }
+
+    public void setCompensationSteps(List<PlanStep> compensationSteps) {
+        this.compensationSteps = compensationSteps;
     }
 }

@@ -16,6 +16,7 @@ import org.monarch.langchain.claw.agent.AgentContext;
 import org.monarch.langchain.claw.agent.AgentExecutionResult;
 import org.monarch.langchain.claw.agent.AgentType;
 import org.monarch.langchain.claw.agent.ExecutorAgentRegistry;
+import org.monarch.langchain.claw.agent.ExecutorAgent;
 import org.monarch.langchain.claw.agent.PlanAgent;
 import org.monarch.langchain.claw.agent.ReviewAgent;
 import org.monarch.langchain.claw.agent.StepExecutionContext;
@@ -138,8 +139,15 @@ public class AgentOrchestrator {
         try {
             outputs = executePlan(userId, session, message, skills, shortTermMessages, memories, plan, requestId, traceId);
         } catch (RuntimeException ex) {
-            sessionManager.updateState(userId, session.getSessionId(), SessionState.FAILED, ex.getMessage(), serialize(plan));
-            throw ex;
+            String failureMessage = ex.getMessage() == null || ex.getMessage().isBlank()
+                ? "执行失败，请稍后重试。"
+                : ex.getMessage();
+            sessionManager.updateState(userId, session.getSessionId(), SessionState.FAILED, failureMessage, serialize(plan));
+            sessionManager.appendMessage(session.getSessionId(), "assistant", failureMessage);
+            result.setNextState(SessionState.FAILED);
+            result.setMessage(failureMessage);
+            result.setStepOutputs(List.of());
+            return result;
         }
         String response = String.join("\n", outputs);
         sessionManager.updateState(userId, session.getSessionId(), SessionState.COMPLETED, null, serialize(plan));
@@ -169,7 +177,7 @@ public class AgentOrchestrator {
             pendingSteps.remove(nextStep);
             StepExecutionContext stepContext = createStepContext(nextStep, completedSteps, outputs);
             try {
-                StepExecutionResult executionResult = executeStep(
+                StepExecutionResult executionResult = executeStepWithRecovery(
                     userId,
                     session,
                     message,
@@ -179,6 +187,8 @@ public class AgentOrchestrator {
                     plan,
                     nextStep,
                     stepContext,
+                    outputs,
+                    completedSteps,
                     requestId,
                     traceId);
                 completedSteps.put(nextStep.getStepId(), executionResult);
@@ -192,6 +202,160 @@ public class AgentOrchestrator {
             }
         }
         return outputs;
+    }
+
+    private StepExecutionResult executeStepWithRecovery(String userId,
+                                                        UserSession session,
+                                                        String message,
+                                                        List<SkillDefinition> skills,
+                                                        List<String> shortTermMessages,
+                                                        List<MemorySnippet> memories,
+                                                        Plan plan,
+                                                        PlanStep step,
+                                                        StepExecutionContext stepContext,
+                                                        List<String> outputs,
+                                                        Map<String, StepExecutionResult> completedSteps,
+                                                        String requestId,
+                                                        String traceId) {
+        ExecutorAgent executor = executorAgentRegistry.getExecutor(step.getExecutorType());
+        int maxRetries = resolveMaxRetries(step, executor);
+        RuntimeException lastError = null;
+
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                StepExecutionResult executionResult = executeStep(
+                    userId,
+                    session,
+                    message,
+                    skills,
+                    shortTermMessages,
+                    memories,
+                    plan,
+                    step,
+                    stepContext,
+                    requestId,
+                    traceId);
+                step.setRetryCount(attempt);
+                return executionResult;
+            } catch (RuntimeException ex) {
+                lastError = ex;
+                step.setRetryCount(attempt);
+                if (attempt == maxRetries) {
+                    break;
+                }
+            }
+        }
+
+        step.setStatus(PlanStepStatus.FAILED);
+        step.setError(lastError == null ? "Step execution failed" : lastError.getMessage());
+
+        if (step.getFallbackStep() != null) {
+            try {
+                StepExecutionResult fallbackResult = executeRecoveryStep(
+                    userId,
+                    session,
+                    message,
+                    skills,
+                    shortTermMessages,
+                    memories,
+                    plan,
+                    step.getFallbackStep(),
+                    outputs,
+                    completedSteps,
+                    requestId,
+                    traceId);
+                step.setResult(step.getFallbackStep().getResult());
+                step.setOutput(new LinkedHashMap<>(step.getFallbackStep().getOutput()));
+                step.setStatus(PlanStepStatus.COMPLETED);
+                step.setError(null);
+                return fallbackResult;
+            } catch (RuntimeException fallbackEx) {
+                lastError = fallbackEx;
+                step.setError(fallbackEx.getMessage());
+            }
+        }
+
+        executeCompensationSteps(
+            userId,
+            session,
+            message,
+            skills,
+            shortTermMessages,
+            memories,
+            plan,
+            step.getCompensationSteps(),
+            outputs,
+            completedSteps,
+            requestId,
+            traceId);
+        throw lastError == null ? new IllegalStateException("Step execution failed") : lastError;
+    }
+
+    private StepExecutionResult executeRecoveryStep(String userId,
+                                                    UserSession session,
+                                                    String message,
+                                                    List<SkillDefinition> skills,
+                                                    List<String> shortTermMessages,
+                                                    List<MemorySnippet> memories,
+                                                    Plan plan,
+                                                    PlanStep recoveryStep,
+                                                    List<String> outputs,
+                                                    Map<String, StepExecutionResult> completedSteps,
+                                                    String requestId,
+                                                    String traceId) {
+        StepExecutionContext recoveryContext = createStepContext(recoveryStep, completedSteps, outputs);
+        return executeStepWithRecovery(
+            userId,
+            session,
+            message,
+            skills,
+            shortTermMessages,
+            memories,
+            plan,
+            recoveryStep,
+            recoveryContext,
+            outputs,
+            completedSteps,
+            requestId,
+            traceId);
+    }
+
+    private void executeCompensationSteps(String userId,
+                                          UserSession session,
+                                          String message,
+                                          List<SkillDefinition> skills,
+                                          List<String> shortTermMessages,
+                                          List<MemorySnippet> memories,
+                                          Plan plan,
+                                          List<PlanStep> compensationSteps,
+                                          List<String> outputs,
+                                          Map<String, StepExecutionResult> completedSteps,
+                                          String requestId,
+                                          String traceId) {
+        for (PlanStep compensationStep : compensationSteps) {
+            try {
+                StepExecutionResult compensationResult = executeRecoveryStep(
+                    userId,
+                    session,
+                    message,
+                    skills,
+                    shortTermMessages,
+                    memories,
+                    plan,
+                    compensationStep,
+                    outputs,
+                    completedSteps,
+                    requestId,
+                    traceId);
+                completedSteps.put(compensationStep.getStepId(), compensationResult);
+                if (compensationResult.getOutputText() != null && !compensationResult.getOutputText().isBlank()) {
+                    outputs.add(compensationResult.getOutputText());
+                }
+            } catch (RuntimeException compensationEx) {
+                compensationStep.setStatus(PlanStepStatus.FAILED);
+                compensationStep.setError(compensationEx.getMessage());
+            }
+        }
     }
 
     private StepExecutionResult executeStep(String userId,
@@ -246,32 +410,56 @@ public class AgentOrchestrator {
         copy.setStatus(source.getStatus());
         copy.setResult(source.getResult());
         copy.setError(source.getError());
+        copy.setRetryCount(source.getRetryCount());
+        copy.setMaxRetries(source.getMaxRetries());
+        copy.setFallbackStep(source.getFallbackStep() == null ? null : copyStep(source.getFallbackStep()));
+        copy.setCompensationSteps(source.getCompensationSteps().stream().map(this::copyStep).toList());
         return copy;
     }
 
     private void normalizePlan(Plan plan) {
         Map<String, Integer> counters = new HashMap<>();
         for (PlanStep step : plan.getSteps()) {
-            if (step.getStepId() == null || step.getStepId().isBlank()) {
-                int index = counters.merge(step.getExecutorType(), 1, Integer::sum);
-                step.setStepId(step.getExecutorType() + "-" + index);
-            }
-            if (step.getDependsOn() == null) {
-                step.setDependsOn(new ArrayList<>());
-            }
-            if (step.getParameters() == null) {
-                step.setParameters(new HashMap<>());
-            }
-            if (step.getInputBindings() == null) {
-                step.setInputBindings(new HashMap<>());
-            }
-            if (step.getOutput() == null) {
-                step.setOutput(new HashMap<>());
-            }
-            if (step.getStatus() == null) {
-                step.setStatus(PlanStepStatus.PENDING);
-            }
+            normalizeStep(step, counters);
         }
+    }
+
+    private void normalizeStep(PlanStep step, Map<String, Integer> counters) {
+        if (step.getStepId() == null || step.getStepId().isBlank()) {
+            int index = counters.merge(step.getExecutorType(), 1, Integer::sum);
+            step.setStepId(step.getExecutorType() + "-" + index);
+        }
+        if (step.getDependsOn() == null) {
+            step.setDependsOn(new ArrayList<>());
+        }
+        if (step.getParameters() == null) {
+            step.setParameters(new HashMap<>());
+        }
+        if (step.getInputBindings() == null) {
+            step.setInputBindings(new HashMap<>());
+        }
+        if (step.getOutput() == null) {
+            step.setOutput(new HashMap<>());
+        }
+        if (step.getStatus() == null) {
+            step.setStatus(PlanStepStatus.PENDING);
+        }
+        if (step.getCompensationSteps() == null) {
+            step.setCompensationSteps(new ArrayList<>());
+        }
+        if (step.getFallbackStep() != null) {
+            normalizeStep(step.getFallbackStep(), counters);
+        }
+        for (PlanStep compensationStep : step.getCompensationSteps()) {
+            normalizeStep(compensationStep, counters);
+        }
+    }
+
+    private int resolveMaxRetries(PlanStep step, ExecutorAgent executor) {
+        if (step.getMaxRetries() != null) {
+            return Math.max(step.getMaxRetries(), 0);
+        }
+        return Math.max(executor.getCapability().getMaxRetries(), 0);
     }
 
     private PlanStep findNextReadyStep(List<PlanStep> pendingSteps, Map<String, StepExecutionResult> completedSteps) {
