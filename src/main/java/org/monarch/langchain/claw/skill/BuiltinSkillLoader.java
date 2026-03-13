@@ -32,11 +32,15 @@ public class BuiltinSkillLoader {
                     definition.setTools(list.stream().map(String::valueOf).toList());
                 }
                 Object promptFile = payload.get("promptFile");
+                Object prompt = payload.get("prompt");
+                if (promptFile != null && prompt != null) {
+                    throw new IllegalStateException("Skill " + definition.getName()
+                        + " cannot define both 'prompt' and 'promptFile'. Use 'promptFile' for external files or 'prompt' for inline text.");
+                }
                 if (promptFile != null) {
                     Resource promptResource = resource.createRelative(String.valueOf(promptFile));
                     definition.setPrompt(new String(promptResource.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
                 }
-                Object prompt = payload.get("prompt");
                 if (prompt != null) {
                     definition.setPrompt(String.valueOf(prompt));
                 }

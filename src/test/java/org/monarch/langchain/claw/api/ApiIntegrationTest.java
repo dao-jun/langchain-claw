@@ -1,5 +1,6 @@
 package org.monarch.langchain.claw.api;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -74,6 +75,6 @@ class ApiIntegrationTest {
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.state").value("COMPLETED"))
-            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("24")));
+            .andExpect(jsonPath("$.message").value(containsString("24")));
     }
 }

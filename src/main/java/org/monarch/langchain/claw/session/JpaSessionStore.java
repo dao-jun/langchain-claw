@@ -3,6 +3,7 @@ package org.monarch.langchain.claw.session;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import org.monarch.langchain.claw.common.SessionState;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +14,7 @@ public class JpaSessionStore implements SessionStore {
 
     private final UserSessionRepository sessionRepository;
     private final SessionMessageRepository messageRepository;
+    private final ConcurrentHashMap<String, Object> messageLocks = new ConcurrentHashMap<>();
 
     public JpaSessionStore(UserSessionRepository sessionRepository, SessionMessageRepository messageRepository) {
         this.sessionRepository = sessionRepository;
@@ -41,12 +43,16 @@ public class JpaSessionStore implements SessionStore {
 
     @Override
     public void appendMessage(String sessionId, String role, String content) {
-        SessionMessageEntity message = new SessionMessageEntity();
-        message.setSessionId(sessionId);
-        message.setMessageOrder((int) messageRepository.countBySessionId(sessionId) + 1);
-        message.setRole(role);
-        message.setContent(content);
-        messageRepository.save(message);
+        Object lock = messageLocks.computeIfAbsent(sessionId, ignored -> new Object());
+        synchronized (lock) {
+            SessionMessageEntity message = new SessionMessageEntity();
+            message.setSessionId(sessionId);
+            SessionMessageEntity latestMessage = messageRepository.findTopBySessionIdOrderByMessageOrderDesc(sessionId);
+            message.setMessageOrder(latestMessage == null ? 1 : latestMessage.getMessageOrder() + 1);
+            message.setRole(role);
+            message.setContent(content);
+            messageRepository.save(message);
+        }
     }
 
     @Override

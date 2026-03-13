@@ -12,8 +12,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class RuleBasedPlanAgent implements PlanAgent {
 
-    private static final Pattern EXPRESSION = Pattern.compile("([0-9()\\s+\\-*/.]+)");
-    private static final Pattern CITY = Pattern.compile("(?:天气|weather)(?:是|怎么样|如何|查询)?([\\u4e00-\\u9fa5A-Za-z]+)?");
+    private static final Pattern CALCULATION_EXPRESSION_PATTERN = Pattern.compile("([0-9()\\s+\\-*/.]+)");
+    private static final Pattern WEATHER_CITY_PATTERN = Pattern.compile("(?:天气|weather)(?:是|怎么样|如何|查询)?([\\u4e00-\\u9fa5A-Za-z]+)?");
 
     @Override
     public Plan generatePlan(AgentContext context) {
@@ -65,11 +65,11 @@ public class RuleBasedPlanAgent implements PlanAgent {
     }
 
     private String extractExpression(String message) {
-        Matcher matcher = EXPRESSION.matcher(message);
+        Matcher matcher = CALCULATION_EXPRESSION_PATTERN.matcher(message);
         String candidate = null;
         while (matcher.find()) {
             String matched = matcher.group(1).trim();
-            if (matched.matches(".*[+\\-*/].*")) {
+            if (isCalculableExpression(matched)) {
                 candidate = matched;
             }
         }
@@ -77,7 +77,7 @@ public class RuleBasedPlanAgent implements PlanAgent {
     }
 
     private String extractCity(String message) {
-        Matcher matcher = CITY.matcher(message);
+        Matcher matcher = WEATHER_CITY_PATTERN.matcher(message);
         if (matcher.find() && matcher.groupCount() > 0 && matcher.group(1) != null && !matcher.group(1).isBlank()) {
             return matcher.group(1);
         }
@@ -88,5 +88,9 @@ public class RuleBasedPlanAgent implements PlanAgent {
             return "上海";
         }
         return "";
+    }
+
+    private boolean isCalculableExpression(String value) {
+        return value.matches("[()\\d\\s+\\-*/.]+") && value.matches(".*\\d.*[+\\-*/].*\\d.*");
     }
 }

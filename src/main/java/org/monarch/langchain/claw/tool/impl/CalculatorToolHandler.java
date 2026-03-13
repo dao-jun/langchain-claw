@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class CalculatorToolHandler implements ToolHandler {
 
+    private static final double EPSILON = 1e-9;
+
     @Override
     public String name() {
         return "calculator";
@@ -17,7 +19,7 @@ public class CalculatorToolHandler implements ToolHandler {
         String expression = String.valueOf(input.getOrDefault("expression", "0"));
         double value = new ExpressionParser(expression).parse();
         long longValue = (long) value;
-        String rendered = Math.abs(value - longValue) < 1e-9 ? Long.toString(longValue) : Double.toString(value);
+        String rendered = Math.abs(value - longValue) < EPSILON ? Long.toString(longValue) : Double.toString(value);
         return expression + " = " + rendered;
     }
 
@@ -83,7 +85,11 @@ public class CalculatorToolHandler implements ToolHandler {
             if (current == '+' || current == '-') {
                 index++;
             }
+            int dots = 0;
             while (index < expression.length() && (Character.isDigit(expression.charAt(index)) || expression.charAt(index) == '.')) {
+                if (expression.charAt(index) == '.' && ++dots > 1) {
+                    throw new IllegalArgumentException("Invalid decimal number in expression: " + expression);
+                }
                 index++;
             }
             return Double.parseDouble(expression.substring(start, index));

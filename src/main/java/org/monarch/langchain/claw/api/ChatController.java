@@ -7,6 +7,7 @@ import org.monarch.langchain.claw.api.dto.ChatResponse;
 import org.monarch.langchain.claw.core.AgentOrchestrator;
 import org.monarch.langchain.claw.core.SessionConcurrencyControl;
 import org.monarch.langchain.claw.config.ModelConfigService;
+import org.monarch.langchain.claw.session.SessionManager;
 import org.monarch.langchain.claw.skill.SkillManager;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,24 +23,27 @@ public class ChatController {
     private final AgentOrchestrator orchestrator;
     private final SkillManager skillManager;
     private final ModelConfigService modelConfigService;
+    private final SessionManager sessionManager;
 
     public ChatController(SessionConcurrencyControl concurrencyControl,
                           AgentOrchestrator orchestrator,
                           SkillManager skillManager,
-                          ModelConfigService modelConfigService) {
+                          ModelConfigService modelConfigService,
+                          SessionManager sessionManager) {
         this.concurrencyControl = concurrencyControl;
         this.orchestrator = orchestrator;
         this.skillManager = skillManager;
         this.modelConfigService = modelConfigService;
+        this.sessionManager = sessionManager;
     }
 
     @PostMapping
     public ChatResponse chat(@RequestHeader("X-User-Id") String userId,
                              @Valid @RequestBody ChatRequest request) {
-        String sessionId = request.getSessionId() == null || request.getSessionId().isBlank() ? userId + "-new" : request.getSessionId();
+        String sessionId = sessionManager.resolveSessionId(request.getSessionId());
         return concurrencyControl.executeInSession(sessionId,
             () -> {
-                var result = orchestrator.process(userId, request.getSessionId(), request.getMessage());
+                var result = orchestrator.process(userId, sessionId, request.getMessage());
                 ChatResponse response = new ChatResponse();
                 response.setSessionId(result.getSessionId());
                 response.setState(result.getNextState());

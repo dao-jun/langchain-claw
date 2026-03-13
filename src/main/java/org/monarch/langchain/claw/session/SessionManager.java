@@ -16,10 +16,14 @@ public class SessionManager {
     }
 
     public UserSession getOrCreate(String userId, String maybeSessionId) {
-        String sessionId = (maybeSessionId == null || maybeSessionId.isBlank())
+        String sessionId = resolveSessionId(maybeSessionId);
+        return sessionStore.getOrCreate(userId, sessionId);
+    }
+
+    public String resolveSessionId(String maybeSessionId) {
+        return (maybeSessionId == null || maybeSessionId.isBlank())
             ? UUID.randomUUID().toString()
             : maybeSessionId;
-        return sessionStore.getOrCreate(userId, sessionId);
     }
 
     public void appendMessage(String sessionId, String role, String content) {

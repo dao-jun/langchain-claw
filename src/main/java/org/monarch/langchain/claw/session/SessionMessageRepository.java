@@ -7,4 +7,6 @@ public interface SessionMessageRepository extends JpaRepository<SessionMessageEn
     List<SessionMessageEntity> findBySessionIdOrderByMessageOrderAsc(String sessionId);
 
     long countBySessionId(String sessionId);
+
+    SessionMessageEntity findTopBySessionIdOrderByMessageOrderDesc(String sessionId);
 }

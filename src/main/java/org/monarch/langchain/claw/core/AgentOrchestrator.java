@@ -130,7 +130,7 @@ public class AgentOrchestrator {
         try {
             return objectMapper.writeValueAsString(plan);
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize plan", e);
+            throw new IllegalStateException("Failed to serialize plan for session. stepCount=" + plan.getSteps().size(), e);
         }
     }
 }

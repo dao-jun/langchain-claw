@@ -13,6 +13,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 public class PersistentMemoryManager implements MemoryManager {
 
+    private static final double BASE_IMPORTANCE = 0.1d;
+    private static final double IMPORTANCE_DIVISOR = 200.0d;
+    private static final double MAX_IMPORTANCE = 1.0d;
+
     private final LongTermMemoryRepository repository;
 
     public PersistentMemoryManager(LongTermMemoryRepository repository) {
@@ -26,7 +30,7 @@ public class PersistentMemoryManager implements MemoryManager {
         entity.setSessionId(sessionId);
         entity.setContent(content);
         entity.setKeywords(extractKeywords(content));
-        entity.setImportanceScore(Math.min(1.0d, 0.1d + content.length() / 200.0d));
+        entity.setImportanceScore(heuristicImportanceScore(content));
         repository.save(entity);
     }
 
@@ -57,7 +61,16 @@ public class PersistentMemoryManager implements MemoryManager {
         return String.join(",", tokenize(content));
     }
 
+    /**
+     * A lightweight heuristic until semantic scoring is introduced: longer persisted exchanges tend
+     * to contain more recoverable context, so they receive a slightly higher recall weight.
+     */
+    private double heuristicImportanceScore(String content) {
+        return Math.min(MAX_IMPORTANCE, BASE_IMPORTANCE + content.length() / IMPORTANCE_DIVISOR);
+    }
+
     private Set<String> tokenize(String content) {
+        // Keep ASCII letters/digits plus the common Chinese block so memory recall works for both English and Chinese prompts.
         return Arrays.stream(content.toLowerCase(Locale.ROOT).split("[^\\p{IsAlphabetic}\\p{IsDigit}\\u4e00-\\u9fa5]+"))
             .filter(token -> !token.isBlank())
             .collect(Collectors.toSet());

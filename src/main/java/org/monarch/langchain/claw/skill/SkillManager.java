@@ -50,7 +50,8 @@ public class SkillManager {
         definition.setDescription(entity.getDescription());
         definition.setExecutorType(entity.getExecutorType());
         definition.setPrompt(entity.getPromptTemplate());
-        definition.setTools(entity.getToolNames().isBlank() ? List.of() : Arrays.stream(entity.getToolNames().split(",")).map(String::trim).toList());
+        String toolNames = entity.getToolNames();
+        definition.setTools(toolNames == null || toolNames.isBlank() ? List.of() : Arrays.stream(toolNames.split(",")).map(String::trim).toList());
         definition.setScope(SkillScope.USER);
         definition.setUserId(entity.getUserId());
         definition.setEnabled(entity.isEnabled());
