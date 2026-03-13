@@ -1,0 +1,28 @@
+使用langchain4j或者langgraph4j编写一个agent助手，
+要求单进程多用户，多agent协作，需要有plan agent，review agent，然后根据plan的结果，启用一个或者多个executor agent。支持多轮会话，human in the loop，支持tools skills，长短期记忆。给我具体的代码实现，注意代码可用，注意代码质量
+
+背景：
+    使用langchain4j或者langgraph4j编写一个agent助手，要求：
+    1. 单进程多用户
+    2. 多agent协作，需要有plan agent，review agent，然后根据plan的结果，启用一个或者多个executor agent
+    3. 支持多轮会话，human in the loop
+    4. 支持tools
+    5. 支持两层skills
+        1. builtin skill,即系统内置skills，放在某些目录中
+        2. 支持用户自己安装skills,做到用户隔离
+    6. 支持长短期记忆
+    7. 支持用户级别切换不同的chatModel给不同的agent角色
+    8. 用户session存储到mysql或者pgsql中
+
+
+ 要求：
+    整体设计文档已经在docs/design目录下了，请你review这个设计文档，是否满足我的需求，并且符合最佳工程实践。如果你有更好的想法，可以提出来！
+    另外，不要更改原本的事迹文档，把你的review意见单独放进一个文件中
+
+要求：
+    1. 目前的这个项目是一个很简单的项目，需要你进行补充
+    2. 目前这个项目不符合工程实践的地方，请指出来，并加以完善
+    3. 要求单机可以支撑大量调用(10~100个用户)，对于并发模型，请详细设计
+    4. 做到不同的用户之间memory隔离
+    5. 你只负责规划当前的agent内核即可，包含agent,skills,tools,memory,session管理等
+    6. 如果当前项目的agent内核机制有缺失的地方，请指出并完善
