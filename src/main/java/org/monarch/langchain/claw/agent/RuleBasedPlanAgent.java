@@ -1,5 +1,6 @@
 package org.monarch.langchain.claw.agent;
 
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.HashMap;
@@ -9,11 +10,15 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.monarch.langchain.claw.common.Plan;
 import org.monarch.langchain.claw.common.PlanStep;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 @Component
 public class RuleBasedPlanAgent implements PlanAgent {
 
+    private static final Logger log = LoggerFactory.getLogger(RuleBasedPlanAgent.class);
     @Override
     public String getName() {
         return "ruleBasedPlanAgent";
@@ -29,6 +34,13 @@ public class RuleBasedPlanAgent implements PlanAgent {
     private static final List<String> KNOWN_CITIES = List.of(
         "北京", "上海", "广州", "深圳", "杭州", "南京", "苏州", "成都", "武汉", "西安", "天津", "重庆", "长沙", "青岛", "厦门");
     private static final List<String> CONVERSATION_CUES = List.of("解释", "说明", "总结", "分析", "建议", "评价", "聊", "说一句", "说说");
+    private final LangChain4jAgentServiceFactory serviceFactory;
+    private final LlmJsonSupport llmJsonSupport;
+
+    public RuleBasedPlanAgent(LangChain4jAgentServiceFactory serviceFactory, LlmJsonSupport llmJsonSupport) {
+        this.serviceFactory = serviceFactory;
+        this.llmJsonSupport = llmJsonSupport;
+    }
 
     @Override
     public Plan generatePlan(AgentContext context) {
@@ -36,7 +48,13 @@ public class RuleBasedPlanAgent implements PlanAgent {
         if (resumedPlan != null) {
             return resumedPlan;
         }
+        if (shouldUseLlm(context)) {
+            return generatePlanWithLlm(context);
+        }
+        return generatePlanWithRules(context);
+    }
 
+    private Plan generatePlanWithRules(AgentContext context) {
         String message = context.getUserMessage();
         Plan plan = new Plan();
         List<PlanStep> steps = new ArrayList<>();
@@ -77,6 +95,28 @@ public class RuleBasedPlanAgent implements PlanAgent {
 
         plan.setSteps(steps);
         return plan;
+    }
+
+    private Plan generatePlanWithLlm(AgentContext context) {
+        try {
+            String rawResponse = serviceFactory.planService(context.getModelSelection()).generatePlan(
+                context.getUserMessage(),
+                llmJsonSupport.toJson(context.getActiveSkills()),
+                llmJsonSupport.toJson(context.getShortTermMessages()),
+                llmJsonSupport.toJson(context.getLongTermMemories()),
+                llmJsonSupport.toJson(context.getPlan()));
+            Plan plan = llmJsonSupport.fromJsonObject(rawResponse, Plan.class);
+            if (plan.getSteps() == null || plan.getSteps().isEmpty()) {
+                throw new IllegalStateException("LLM returned an empty plan.");
+            }
+            return plan;
+        } catch (RuntimeException ex) {
+            log.warn("Falling back to rule-based plan generation. provider={}, model={}, error={}",
+                context.getModelSelection().getProvider(),
+                context.getModelSelection().getModelName(),
+                ex.getMessage());
+            return generatePlanWithRules(context);
+        }
     }
 
     private Plan resumePendingPlan(AgentContext context) {
@@ -218,5 +258,10 @@ public class RuleBasedPlanAgent implements PlanAgent {
 
     private boolean isCalculableExpression(String value) {
         return value.matches("[()\\d\\s+\\-*/.]+") && value.matches(".*\\d.*[+\\-*/].*\\d.*");
+    }
+
+    private boolean shouldUseLlm(AgentContext context) {
+        String provider = context.getModelSelection() == null ? null : context.getModelSelection().getProvider();
+        return StringUtils.hasText(provider) && !"rule-based".equals(provider.trim().toLowerCase(Locale.ROOT));
     }
 }

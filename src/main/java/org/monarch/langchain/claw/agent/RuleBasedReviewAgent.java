@@ -1,18 +1,29 @@
 package org.monarch.langchain.claw.agent;
 
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import org.monarch.langchain.claw.common.PlanStep;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.monarch.langchain.claw.skill.SkillManager;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 @Component
 public class RuleBasedReviewAgent implements ReviewAgent {
 
+    private static final Logger log = LoggerFactory.getLogger(RuleBasedReviewAgent.class);
     private final SkillManager skillManager;
+    private final LangChain4jAgentServiceFactory serviceFactory;
+    private final LlmJsonSupport llmJsonSupport;
 
-    public RuleBasedReviewAgent(SkillManager skillManager) {
+    public RuleBasedReviewAgent(SkillManager skillManager,
+                                LangChain4jAgentServiceFactory serviceFactory,
+                                LlmJsonSupport llmJsonSupport) {
         this.skillManager = skillManager;
+        this.serviceFactory = serviceFactory;
+        this.llmJsonSupport = llmJsonSupport;
     }
 
     @Override
@@ -27,6 +38,32 @@ public class RuleBasedReviewAgent implements ReviewAgent {
 
     @Override
     public ReviewResult review(AgentContext context) {
+        ReviewResult deterministicResult = reviewWithRules(context);
+        if (deterministicResult.decision() != ReviewDecision.ACCEPT) {
+            return deterministicResult;
+        }
+        if (!shouldUseLlm(context)) {
+            return deterministicResult;
+        }
+        try {
+            String rawResponse = serviceFactory.reviewService(context.getModelSelection()).reviewPlan(
+                context.getUserMessage(),
+                llmJsonSupport.toJson(context.getActiveSkills()),
+                llmJsonSupport.toJson(context.getPlan()));
+            LlmReviewResponse reviewResponse = llmJsonSupport.fromJsonObject(rawResponse, LlmReviewResponse.class);
+            ReviewDecision decision = ReviewDecision.valueOf(reviewResponse.getDecision().trim().toUpperCase(Locale.ROOT));
+            String message = StringUtils.hasText(reviewResponse.getMessage()) ? reviewResponse.getMessage() : deterministicResult.message();
+            return new ReviewResult(decision, message);
+        } catch (RuntimeException ex) {
+            log.warn("Falling back to rule-based review. provider={}, model={}, error={}",
+                context.getModelSelection().getProvider(),
+                context.getModelSelection().getModelName(),
+                ex.getMessage());
+            return deterministicResult;
+        }
+    }
+
+    private ReviewResult reviewWithRules(AgentContext context) {
         Set<String> stepIds = new HashSet<>();
         for (PlanStep step : context.getPlan().getSteps()) {
             if (step.getStepId() == null || step.getStepId().isBlank()) {
@@ -55,5 +92,10 @@ public class RuleBasedReviewAgent implements ReviewAgent {
             }
         }
         return new ReviewResult(ReviewDecision.ACCEPT, "计划审核通过。");
+    }
+
+    private boolean shouldUseLlm(AgentContext context) {
+        String provider = context.getModelSelection() == null ? null : context.getModelSelection().getProvider();
+        return StringUtils.hasText(provider) && !"rule-based".equals(provider.trim().toLowerCase(Locale.ROOT));
     }
 }

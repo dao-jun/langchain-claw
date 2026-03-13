@@ -11,6 +11,8 @@
 - Plan / Review / Executor 三段式主流程已落地
 - 支持多轮会话与 `WAITING_FOR_USER`
 - 支持同一 Session 串行执行，避免同 Session 并发乱序
+- 已支持按用户模型配置切换到 LangChain4j LLM 版本的 PlanAgent / ReviewAgent / conversation ExecutorAgent
+- 默认仍保留 rule-based fallback，便于测试、离线运行与降级
 
 ### 1.2 基础 Skills / Tools
 - 已具备 builtin skills
@@ -60,7 +62,8 @@
    - 审批、签名、来源治理
 
 5. **模型治理**
-   - 预算、限流、fallback、审计
+    - 预算、限流、fallback、审计
+    - 已部分实现：当 provider 配为 `zhipu` 时，可通过用户级模型配置切到真实 ChatLanguageModel
 
 6. **更高级的 Agent 编排**
     - 已实现：按 plan 顺序与依赖关系执行多步骤任务
