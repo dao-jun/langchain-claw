@@ -22,6 +22,8 @@ public class PlanStep {
     private Integer maxRetries;
     private PlanStep fallbackStep;
     private List<PlanStep> compensationSteps = new ArrayList<>();
+    private String condition;
+    private boolean conditionMatched = true;
 
     public String getStepId() {
         return stepId;
@@ -141,5 +143,21 @@ public class PlanStep {
 
     public void setCompensationSteps(List<PlanStep> compensationSteps) {
         this.compensationSteps = compensationSteps;
+    }
+
+    public String getCondition() {
+        return condition;
+    }
+
+    public void setCondition(String condition) {
+        this.condition = condition;
+    }
+
+    public boolean isConditionMatched() {
+        return conditionMatched;
+    }
+
+    public void setConditionMatched(boolean conditionMatched) {
+        this.conditionMatched = conditionMatched;
     }
 }

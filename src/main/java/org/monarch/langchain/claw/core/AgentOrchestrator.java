@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.UUID;
@@ -36,10 +37,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@Transactional
-public class AgentOrchestrator {
+    @Transactional
+    public class AgentOrchestrator {
 
     private static final Pattern BINDING_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
+    private static final Pattern CONDITION_PATTERN = Pattern.compile("^\\s*(.+?)\\s*(==|!=|>=|<=|>|<)\\s*(.+?)\\s*$");
 
     private final SessionManager sessionManager;
     private final SkillManager skillManager;
@@ -173,35 +175,110 @@ public class AgentOrchestrator {
         Map<String, StepExecutionResult> completedSteps = new LinkedHashMap<>();
 
         while (!pendingSteps.isEmpty()) {
-            PlanStep nextStep = findNextReadyStep(pendingSteps, completedSteps);
-            pendingSteps.remove(nextStep);
-            StepExecutionContext stepContext = createStepContext(nextStep, completedSteps, outputs);
-            try {
-                StepExecutionResult executionResult = executeStepWithRecovery(
-                    userId,
-                    session,
-                    message,
-                    skills,
-                    shortTermMessages,
-                    memories,
-                    plan,
-                    nextStep,
-                    stepContext,
-                    outputs,
-                    completedSteps,
-                    requestId,
-                    traceId);
-                completedSteps.put(nextStep.getStepId(), executionResult);
-                if (executionResult.getOutputText() != null && !executionResult.getOutputText().isBlank()) {
-                    outputs.add(executionResult.getOutputText());
+            List<PlanStep> readySteps = findReadySteps(pendingSteps, completedSteps);
+            pendingSteps.removeAll(readySteps);
+            List<ExecutedStep> executedSteps = executeReadySteps(
+                userId,
+                session,
+                message,
+                skills,
+                shortTermMessages,
+                memories,
+                plan,
+                readySteps,
+                completedSteps,
+                outputs,
+                requestId,
+                traceId);
+            for (ExecutedStep executedStep : executedSteps) {
+                completedSteps.put(executedStep.step().getStepId(), executedStep.result());
+                if (executedStep.result().getOutputText() != null && !executedStep.result().getOutputText().isBlank()) {
+                    outputs.add(executedStep.result().getOutputText());
                 }
-            } catch (RuntimeException ex) {
-                nextStep.setStatus(PlanStepStatus.FAILED);
-                nextStep.setError(ex.getMessage());
-                throw ex;
             }
         }
         return outputs;
+    }
+
+    private List<ExecutedStep> executeReadySteps(String userId,
+                                                 UserSession session,
+                                                 String message,
+                                                 List<SkillDefinition> skills,
+                                                 List<String> shortTermMessages,
+                                                 List<MemorySnippet> memories,
+                                                 Plan plan,
+                                                 List<PlanStep> readySteps,
+                                                 Map<String, StepExecutionResult> completedSteps,
+                                                 List<String> outputs,
+                                                 String requestId,
+                                                 String traceId) {
+        Map<String, StepExecutionResult> completedSnapshot = new LinkedHashMap<>(completedSteps);
+        List<String> outputsSnapshot = List.copyOf(outputs);
+        List<CompletableFuture<ExecutedStep>> futures = readySteps.stream()
+            .map(step -> CompletableFuture.supplyAsync(() -> executeReadyStep(
+                userId,
+                session,
+                message,
+                skills,
+                shortTermMessages,
+                memories,
+                plan,
+                step,
+                completedSnapshot,
+                outputsSnapshot,
+                requestId,
+                traceId)))
+            .toList();
+        List<ExecutedStep> executedSteps = new ArrayList<>();
+        for (CompletableFuture<ExecutedStep> future : futures) {
+            executedSteps.add(future.join());
+        }
+        return executedSteps;
+    }
+
+    private ExecutedStep executeReadyStep(String userId,
+                                          UserSession session,
+                                          String message,
+                                          List<SkillDefinition> skills,
+                                          List<String> shortTermMessages,
+                                          List<MemorySnippet> memories,
+                                          Plan plan,
+                                          PlanStep step,
+                                          Map<String, StepExecutionResult> completedSteps,
+                                          List<String> outputs,
+                                          String requestId,
+                                          String traceId) {
+        if (!shouldExecuteStep(step, completedSteps)) {
+            step.setStatus(PlanStepStatus.SKIPPED);
+            step.setConditionMatched(false);
+            step.setError(null);
+            step.setResult(null);
+            step.setOutput(new HashMap<>());
+            return new ExecutedStep(step, new StepExecutionResult("", Map.of()));
+        }
+        step.setConditionMatched(true);
+        StepExecutionContext stepContext = createStepContext(step, completedSteps, outputs);
+        try {
+            StepExecutionResult executionResult = executeStepWithRecovery(
+                userId,
+                session,
+                message,
+                skills,
+                shortTermMessages,
+                memories,
+                plan,
+                step,
+                stepContext,
+                new ArrayList<>(outputs),
+                new LinkedHashMap<>(completedSteps),
+                requestId,
+                traceId);
+            return new ExecutedStep(step, executionResult);
+        } catch (RuntimeException ex) {
+            step.setStatus(PlanStepStatus.FAILED);
+            step.setError(ex.getMessage());
+            throw ex;
+        }
     }
 
     private StepExecutionResult executeStepWithRecovery(String userId,
@@ -414,6 +491,8 @@ public class AgentOrchestrator {
         copy.setMaxRetries(source.getMaxRetries());
         copy.setFallbackStep(source.getFallbackStep() == null ? null : copyStep(source.getFallbackStep()));
         copy.setCompensationSteps(source.getCompensationSteps().stream().map(this::copyStep).toList());
+        copy.setCondition(source.getCondition());
+        copy.setConditionMatched(source.isConditionMatched());
         return copy;
     }
 
@@ -447,6 +526,9 @@ public class AgentOrchestrator {
         if (step.getCompensationSteps() == null) {
             step.setCompensationSteps(new ArrayList<>());
         }
+        if (step.getCondition() != null && step.getCondition().isBlank()) {
+            step.setCondition(null);
+        }
         if (step.getFallbackStep() != null) {
             normalizeStep(step.getFallbackStep(), counters);
         }
@@ -462,11 +544,14 @@ public class AgentOrchestrator {
         return Math.max(executor.getCapability().getMaxRetries(), 0);
     }
 
-    private PlanStep findNextReadyStep(List<PlanStep> pendingSteps, Map<String, StepExecutionResult> completedSteps) {
-        return pendingSteps.stream()
+    private List<PlanStep> findReadySteps(List<PlanStep> pendingSteps, Map<String, StepExecutionResult> completedSteps) {
+        List<PlanStep> readySteps = pendingSteps.stream()
             .filter(step -> completedSteps.keySet().containsAll(step.getDependsOn()))
-            .findFirst()
-            .orElseThrow(() -> new IllegalStateException(buildDependencyErrorMessage(pendingSteps, completedSteps)));
+            .toList();
+        if (readySteps.isEmpty()) {
+            throw new IllegalStateException(buildDependencyErrorMessage(pendingSteps, completedSteps));
+        }
+        return readySteps;
     }
 
     private String buildDependencyErrorMessage(List<PlanStep> pendingSteps, Map<String, StepExecutionResult> completedSteps) {
@@ -543,6 +628,80 @@ public class AgentOrchestrator {
             current = currentMap.get(path[i]);
         }
         return current;
+    }
+
+    private boolean shouldExecuteStep(PlanStep step, Map<String, StepExecutionResult> completedSteps) {
+        if (step.getCondition() == null || step.getCondition().isBlank()) {
+            return true;
+        }
+        String resolvedCondition = String.valueOf(resolveBinding(step.getCondition(), completedSteps));
+        Matcher matcher = CONDITION_PATTERN.matcher(resolvedCondition);
+        if (!matcher.matches()) {
+            Object directValue = resolveConditionValue(resolvedCondition);
+            return toBoolean(directValue);
+        }
+        Object left = resolveConditionValue(matcher.group(1));
+        Object right = resolveConditionValue(matcher.group(3));
+        return compareCondition(left, right, matcher.group(2));
+    }
+
+    private Object resolveConditionValue(String rawValue) {
+        String trimmed = rawValue.trim();
+        if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+            return trimmed.substring(1, trimmed.length() - 1);
+        }
+        if ("true".equalsIgnoreCase(trimmed) || "false".equalsIgnoreCase(trimmed)) {
+            return Boolean.parseBoolean(trimmed);
+        }
+        try {
+            return Double.parseDouble(trimmed);
+        } catch (NumberFormatException ignored) {
+            return trimmed;
+        }
+    }
+
+    private boolean compareCondition(Object left, Object right, String operator) {
+        if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
+            double leftValue = leftNumber.doubleValue();
+            double rightValue = rightNumber.doubleValue();
+            return switch (operator) {
+                case "==" -> Double.compare(leftValue, rightValue) == 0;
+                case "!=" -> Double.compare(leftValue, rightValue) != 0;
+                case ">" -> leftValue > rightValue;
+                case ">=" -> leftValue >= rightValue;
+                case "<" -> leftValue < rightValue;
+                case "<=" -> leftValue <= rightValue;
+                default -> throw new IllegalArgumentException("Unsupported condition operator: " + operator);
+            };
+        }
+        String leftValue = String.valueOf(left);
+        String rightValue = String.valueOf(right);
+        return switch (operator) {
+            case "==" -> leftValue.equals(rightValue);
+            case "!=" -> !leftValue.equals(rightValue);
+            case ">" -> leftValue.compareTo(rightValue) > 0;
+            case ">=" -> leftValue.compareTo(rightValue) >= 0;
+            case "<" -> leftValue.compareTo(rightValue) < 0;
+            case "<=" -> leftValue.compareTo(rightValue) <= 0;
+            default -> throw new IllegalArgumentException("Unsupported condition operator: " + operator);
+        };
+    }
+
+    private boolean toBoolean(Object value) {
+        if (value instanceof Boolean booleanValue) {
+            return booleanValue;
+        }
+        if (value instanceof Number numberValue) {
+            return Double.compare(numberValue.doubleValue(), 0.0d) != 0;
+        }
+        if (value == null) {
+            return false;
+        }
+        String stringValue = String.valueOf(value).trim();
+        return !stringValue.isEmpty() && !"false".equalsIgnoreCase(stringValue) && !"0".equals(stringValue);
+    }
+
+    private record ExecutedStep(PlanStep step, StepExecutionResult result) {
     }
 
     private String serialize(Plan plan) {
