@@ -91,4 +91,44 @@ class AuditApiIntegrationTest {
         assertThat(auditJson).hasSize(1);
         assertThat(auditJson.get(0).get("toolName").asText()).isEqualTo("weather");
     }
+
+    @Test
+    void shouldAvoidDuplicateToolCallsForIdempotentReplay() throws Exception {
+        mockMvc.perform(post("/api/v1/chat")
+                .header("X-User-Id", "audit-user-3")
+                .header("X-Request-Id", "req-audit-idempotent-001")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "message": "请计算 8*(2+1)"
+                    }
+                    """))
+            .andExpect(status().isOk());
+
+        MvcResult duplicateChatResult = mockMvc.perform(post("/api/v1/chat")
+                .header("X-User-Id", "audit-user-3")
+                .header("X-Request-Id", "req-audit-idempotent-001")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "message": "请计算 8*(2+1)"
+                    }
+                    """))
+            .andExpect(status().isOk())
+            .andReturn();
+
+        JsonNode chatJson = objectMapper.readTree(duplicateChatResult.getResponse().getContentAsString());
+        String sessionId = chatJson.get("sessionId").asText();
+
+        MvcResult auditResult = mockMvc.perform(get("/api/v1/audit/tool-calls")
+                .header("X-User-Id", "audit-user-3")
+                .param("sessionId", sessionId)
+                .param("limit", "10"))
+            .andExpect(status().isOk())
+            .andReturn();
+
+        JsonNode auditJson = objectMapper.readTree(auditResult.getResponse().getContentAsString());
+        assertThat(auditJson).hasSize(1);
+        assertThat(auditJson.get(0).get("requestId").asText()).isEqualTo("req-audit-idempotent-001");
+    }
 }

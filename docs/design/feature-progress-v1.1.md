@@ -26,6 +26,10 @@
   - stepId / dependsOn / inputBindings
   - 结构化步骤输出（如天气温度、计算结果）
   - 支持“先查多个城市天气，再计算平均温度，再继续解释”的依赖执行
+- 新增 `/chat` 请求幂等能力：
+  - 以 `userId + requestId` 作为幂等键
+  - 对相同请求回放首次响应，避免重复执行 agent/tool 链路
+  - 对相同 requestId 但不同请求体返回冲突，防止错误复用
 - 新增工具调用审计能力：
   - 记录 userId / sessionId / requestId / traceId
   - 记录 tool 输入、输出、错误与耗时
@@ -42,8 +46,8 @@
    - 明确谁能装 Skill、谁能切模型、谁能恢复 Session
 
 2. **请求幂等与数据库一致性**
-   - `/chat` 请求幂等键
-   - Session 乐观锁 / 状态转换约束
+   - 已实现：`/chat` 请求幂等键与响应回放
+   - 仍需继续增强：Session 乐观锁 / 状态转换约束
 
 3. **长期记忆增强**
    - pgvector / 语义检索
