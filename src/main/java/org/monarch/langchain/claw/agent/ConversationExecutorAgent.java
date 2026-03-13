@@ -36,6 +36,7 @@ public class ConversationExecutorAgent implements ExecutorAgent {
         HashMap<String, Object> input = new HashMap<>(step.getParameters());
         input.put("message", context.getUserMessage());
         input.put("memories", context.getLongTermMemories().stream().map(MemorySnippet::content).toList());
+        input.put("priorStepOutputs", step.getParameters().getOrDefault("priorStepOutputs", List.of()));
         input.put("prompt", resolvePrompt(context.getActiveSkills(), step));
         String output = toolRegistry.execute(step.getExecutorType(), input);
         step.setResult(output);

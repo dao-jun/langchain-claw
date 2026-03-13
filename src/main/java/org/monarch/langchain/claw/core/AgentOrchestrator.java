@@ -2,6 +2,8 @@ package org.monarch.langchain.claw.core;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import org.monarch.langchain.claw.agent.AgentContext;
 import org.monarch.langchain.claw.agent.AgentExecutionResult;
@@ -59,6 +61,7 @@ public class AgentOrchestrator {
         List<SkillDefinition> skills = skillManager.getAvailableSkills(userId);
         List<String> shortTermMessages = sessionManager.recentMessages(session.getSessionId(), 20);
         List<MemorySnippet> memories = memoryManager.recall(userId, message, 5);
+        Plan pendingPlan = session.getState() == SessionState.WAITING_FOR_USER ? deserializePlan(session.getCurrentPlanJson()) : null;
 
         AgentContext planningContext = new AgentContext(
             userId,
@@ -69,7 +72,7 @@ public class AgentOrchestrator {
             shortTermMessages,
             memories,
             modelConfigService.resolve(userId, AgentType.PLAN),
-            null);
+            pendingPlan);
         AgentExecutionResult planResult = planAgent.execute(planningContext).join();
         Plan plan = planResult.getPlan();
         sessionManager.updateState(userId, session.getSessionId(), SessionState.PLAN_GENERATED, null, serialize(plan));
@@ -105,10 +108,10 @@ public class AgentOrchestrator {
         }
 
         sessionManager.updateState(userId, session.getSessionId(), SessionState.EXECUTING, null, serialize(plan));
-        List<String> outputs = plan.getSteps().stream()
-            .map(step -> executeStep(userId, session, message, skills, shortTermMessages, memories, plan, step))
-            .flatMap(List::stream)
-            .toList();
+        List<String> outputs = new ArrayList<>();
+        for (PlanStep step : plan.getSteps()) {
+            outputs.addAll(executeStep(userId, session, message, skills, shortTermMessages, memories, plan, step, outputs));
+        }
         String response = String.join("\n", outputs);
         sessionManager.updateState(userId, session.getSessionId(), SessionState.COMPLETED, null, serialize(plan));
         sessionManager.appendMessage(session.getSessionId(), "assistant", response);
@@ -126,10 +129,17 @@ public class AgentOrchestrator {
                                      List<String> shortTermMessages,
                                      List<MemorySnippet> memories,
                                      Plan plan,
-                                     PlanStep step) {
+                                     PlanStep step,
+                                     List<String> priorOutputs) {
         Plan singleStepPlan = new Plan();
         singleStepPlan.setRationale(plan.getRationale());
-        singleStepPlan.setSteps(List.of(step));
+        PlanStep executionStep = copyStep(step);
+        if ("conversation".equals(step.getExecutorType()) && !priorOutputs.isEmpty()) {
+            // Conversation steps receive earlier step outputs so follow-up explanation/summarization
+            // requests can respond with the task results that were already produced in this plan.
+            executionStep.getParameters().put("priorStepOutputs", new ArrayList<>(priorOutputs));
+        }
+        singleStepPlan.setSteps(List.of(executionStep));
         AgentContext executionContext = new AgentContext(
             userId,
             session.getSessionId(),
@@ -140,7 +150,21 @@ public class AgentOrchestrator {
             memories,
             modelConfigService.resolve(userId, AgentType.EXECUTOR),
             singleStepPlan);
-        return executorAgentRegistry.getExecutor(step.getExecutorType()).execute(executionContext).join().getStepOutputs();
+        AgentExecutionResult executionResult = executorAgentRegistry.getExecutor(step.getExecutorType()).execute(executionContext).join();
+        step.setResult(executionStep.getResult());
+        step.setError(executionStep.getError());
+        return executionResult.getStepOutputs();
+    }
+
+    private PlanStep copyStep(PlanStep source) {
+        PlanStep copy = new PlanStep();
+        copy.setDescription(source.getDescription());
+        copy.setExecutorType(source.getExecutorType());
+        copy.setRequiredSkills(new ArrayList<>(source.getRequiredSkills()));
+        copy.setParameters(new java.util.HashMap<>(source.getParameters()));
+        copy.setResult(source.getResult());
+        copy.setError(source.getError());
+        return copy;
     }
 
     private String serialize(Plan plan) {
@@ -148,6 +172,17 @@ public class AgentOrchestrator {
             return objectMapper.writeValueAsString(plan);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize plan for session. stepCount=" + plan.getSteps().size(), e);
+        }
+    }
+
+    private Plan deserializePlan(String currentPlanJson) {
+        if (currentPlanJson == null || currentPlanJson.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(currentPlanJson, Plan.class);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to deserialize pending plan.", e);
         }
     }
 }

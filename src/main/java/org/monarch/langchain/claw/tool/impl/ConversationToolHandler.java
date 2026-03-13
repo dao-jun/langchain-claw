@@ -19,6 +19,15 @@ public class ConversationToolHandler implements ToolHandler {
         String prompt = String.valueOf(input.getOrDefault("prompt", ""));
         @SuppressWarnings("unchecked")
         List<String> memories = (List<String>) input.getOrDefault("memories", List.of());
+        @SuppressWarnings("unchecked")
+        List<String> priorStepOutputs = (List<String>) input.getOrDefault("priorStepOutputs", List.of());
+        if (!priorStepOutputs.isEmpty()) {
+            String prefix = "基于已完成步骤结果：" + String.join(" | ", priorStepOutputs);
+            if (!prompt.isBlank()) {
+                return prefix + "\n根据技能提示处理：" + prompt + "\n用户消息：" + message;
+            }
+            return prefix + "\n当前请求：" + message;
+        }
         if (!prompt.isBlank()) {
             return "根据技能提示处理：" + prompt + "\n用户消息：" + message;
         }
