@@ -18,6 +18,8 @@ public class AgentContext {
     private final List<MemorySnippet> longTermMemories;
     private final ModelSelection modelSelection;
     private final Plan plan;
+    private final String requestId;
+    private final String traceId;
 
     public AgentContext(String userId,
                         String sessionId,
@@ -27,7 +29,9 @@ public class AgentContext {
                         List<String> shortTermMessages,
                         List<MemorySnippet> longTermMemories,
                         ModelSelection modelSelection,
-                        Plan plan) {
+                        Plan plan,
+                        String requestId,
+                        String traceId) {
         this.userId = userId;
         this.sessionId = sessionId;
         this.userMessage = userMessage;
@@ -37,6 +41,8 @@ public class AgentContext {
         this.longTermMemories = longTermMemories;
         this.modelSelection = modelSelection;
         this.plan = plan;
+        this.requestId = requestId;
+        this.traceId = traceId;
     }
 
     public String getUserId() {
@@ -73,5 +79,13 @@ public class AgentContext {
 
     public Plan getPlan() {
         return plan;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public String getTraceId() {
+        return traceId;
     }
 }

@@ -28,6 +28,8 @@ public interface ReviewAgent extends Agent {
             AgentExecutionResult result = new AgentExecutionResult();
             result.setSessionId(context.getSessionId());
             result.setPlan(context.getPlan());
+            result.setRequestId(context.getRequestId());
+            result.setTraceId(context.getTraceId());
             result.setMessage(review.message());
             result.setNextState(switch (review.decision()) {
                 case ACCEPT -> SessionState.PLAN_REVIEWED;

@@ -2,6 +2,7 @@ package org.monarch.langchain.claw.agent;
 
 import java.util.HashMap;
 import java.util.List;
+import org.monarch.langchain.claw.audit.ToolCallContext;
 import org.monarch.langchain.claw.common.Plan;
 import org.monarch.langchain.claw.common.PlanStep;
 import org.monarch.langchain.claw.memory.MemorySnippet;
@@ -38,7 +39,10 @@ public class ConversationExecutorAgent implements ExecutorAgent {
         input.put("memories", context.getLongTermMemories().stream().map(MemorySnippet::content).toList());
         input.put("priorStepOutputs", step.getParameters().getOrDefault("priorStepOutputs", List.of()));
         input.put("prompt", resolvePrompt(context.getActiveSkills(), step));
-        String output = toolRegistry.execute(step.getExecutorType(), input);
+        String output = toolRegistry.execute(
+            step.getExecutorType(),
+            input,
+            new ToolCallContext(context.getUserId(), context.getSessionId(), context.getRequestId(), context.getTraceId()));
         step.setResult(output);
         return List.of(output);
     }

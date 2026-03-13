@@ -1,6 +1,7 @@
 package org.monarch.langchain.claw.api;
 
 import java.time.Duration;
+import java.util.UUID;
 import jakarta.validation.Valid;
 import org.monarch.langchain.claw.api.dto.ChatRequest;
 import org.monarch.langchain.claw.api.dto.ChatResponse;
@@ -39,16 +40,21 @@ public class ChatController {
 
     @PostMapping
     public ChatResponse chat(@RequestHeader("X-User-Id") String userId,
+                             @RequestHeader(value = "X-Request-Id", required = false) String requestId,
                              @Valid @RequestBody ChatRequest request) {
         String sessionId = sessionManager.resolveSessionId(request.getSessionId());
+        String effectiveRequestId = (requestId == null || requestId.isBlank()) ? UUID.randomUUID().toString() : requestId;
+        String traceId = UUID.randomUUID().toString();
         return concurrencyControl.executeInSession(sessionId,
             () -> {
-                var result = orchestrator.process(userId, sessionId, request.getMessage());
+                var result = orchestrator.process(userId, sessionId, request.getMessage(), effectiveRequestId, traceId);
                 ChatResponse response = new ChatResponse();
                 response.setSessionId(result.getSessionId());
                 response.setState(result.getNextState());
                 response.setMessage(result.getMessage());
                 response.setPlan(result.getPlan());
+                response.setRequestId(result.getRequestId());
+                response.setTraceId(result.getTraceId());
                 response.setStepOutputs(result.getStepOutputs());
                 response.setActiveSkills(skillManager.getAvailableSkills(userId));
                 response.setActiveModels(modelConfigService.resolveAll(userId));

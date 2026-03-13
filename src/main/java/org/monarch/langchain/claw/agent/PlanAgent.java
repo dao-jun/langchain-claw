@@ -29,6 +29,8 @@ public interface PlanAgent extends Agent {
             AgentExecutionResult result = new AgentExecutionResult();
             result.setSessionId(context.getSessionId());
             result.setPlan(plan);
+            result.setRequestId(context.getRequestId());
+            result.setTraceId(context.getTraceId());
             result.setNextState(SessionState.PLAN_GENERATED);
             result.setMessage("计划已生成");
             return result;

@@ -13,6 +13,8 @@ public class ChatResponse {
     private SessionState state;
     private String message;
     private Plan plan;
+    private String requestId;
+    private String traceId;
     private List<String> stepOutputs = new ArrayList<>();
     private List<SkillDefinition> activeSkills = new ArrayList<>();
     private List<ModelSelection> activeModels = new ArrayList<>();
@@ -47,6 +49,22 @@ public class ChatResponse {
 
     public void setPlan(Plan plan) {
         this.plan = plan;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
+    }
+
+    public String getTraceId() {
+        return traceId;
+    }
+
+    public void setTraceId(String traceId) {
+        this.traceId = traceId;
     }
 
     public List<String> getStepOutputs() {

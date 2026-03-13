@@ -32,6 +32,8 @@ public interface ExecutorAgent extends Agent {
             AgentExecutionResult result = new AgentExecutionResult();
             result.setSessionId(context.getSessionId());
             result.setPlan(context.getPlan());
+            result.setRequestId(context.getRequestId());
+            result.setTraceId(context.getTraceId());
             result.setStepOutputs(outputs);
             result.setMessage(String.join("\n", outputs));
             result.setNextState(SessionState.COMPLETED);

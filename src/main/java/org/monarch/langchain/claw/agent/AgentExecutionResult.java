@@ -11,6 +11,8 @@ public class AgentExecutionResult {
     private SessionState nextState;
     private String message;
     private Plan plan;
+    private String requestId;
+    private String traceId;
     private List<String> stepOutputs = new ArrayList<>();
 
     public String getSessionId() {
@@ -43,6 +45,22 @@ public class AgentExecutionResult {
 
     public void setPlan(Plan plan) {
         this.plan = plan;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
+    }
+
+    public String getTraceId() {
+        return traceId;
+    }
+
+    public void setTraceId(String traceId) {
+        this.traceId = traceId;
     }
 
     public List<String> getStepOutputs() {

@@ -2,6 +2,7 @@ package org.monarch.langchain.claw.agent;
 
 import java.util.HashMap;
 import java.util.List;
+import org.monarch.langchain.claw.audit.ToolCallContext;
 import org.monarch.langchain.claw.common.Plan;
 import org.monarch.langchain.claw.common.PlanStep;
 import org.monarch.langchain.claw.tool.ToolRegistry;
@@ -31,7 +32,10 @@ public class ToolDelegatingExecutorAgent implements ExecutorAgent {
     @Override
     public List<String> executePlan(AgentContext context, Plan plan) {
         PlanStep step = plan.getSteps().get(0);
-        String output = toolRegistry.execute(step.getExecutorType(), new HashMap<>(step.getParameters()));
+        String output = toolRegistry.execute(
+            step.getExecutorType(),
+            new HashMap<>(step.getParameters()),
+            new ToolCallContext(context.getUserId(), context.getSessionId(), context.getRequestId(), context.getTraceId()));
         step.setResult(output);
         return List.of(output);
     }

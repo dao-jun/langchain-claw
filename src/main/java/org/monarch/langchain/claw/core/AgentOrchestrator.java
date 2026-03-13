@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import org.monarch.langchain.claw.agent.AgentContext;
 import org.monarch.langchain.claw.agent.AgentExecutionResult;
 import org.monarch.langchain.claw.agent.AgentType;
@@ -56,6 +57,10 @@ public class AgentOrchestrator {
     }
 
     public AgentExecutionResult process(String userId, String maybeSessionId, String message) {
+        return process(userId, maybeSessionId, message, UUID.randomUUID().toString(), UUID.randomUUID().toString());
+    }
+
+    public AgentExecutionResult process(String userId, String maybeSessionId, String message, String requestId, String traceId) {
         UserSession session = sessionManager.getOrCreate(userId, maybeSessionId);
         sessionManager.appendMessage(session.getSessionId(), "user", message);
         List<SkillDefinition> skills = skillManager.getAvailableSkills(userId);
@@ -72,7 +77,9 @@ public class AgentOrchestrator {
             shortTermMessages,
             memories,
             modelConfigService.resolve(userId, AgentType.PLAN),
-            pendingPlan);
+            pendingPlan,
+            requestId,
+            traceId);
         AgentExecutionResult planResult = planAgent.execute(planningContext).join();
         Plan plan = planResult.getPlan();
         sessionManager.updateState(userId, session.getSessionId(), SessionState.PLAN_GENERATED, null, serialize(plan));
@@ -86,12 +93,16 @@ public class AgentOrchestrator {
             shortTermMessages,
             memories,
             modelConfigService.resolve(userId, AgentType.REVIEW),
-            plan);
+            plan,
+            requestId,
+            traceId);
         AgentExecutionResult review = reviewAgent.execute(reviewContext).join();
 
         AgentExecutionResult result = new AgentExecutionResult();
         result.setSessionId(session.getSessionId());
         result.setPlan(plan);
+        result.setRequestId(requestId);
+        result.setTraceId(traceId);
         if (review.getNextState() == SessionState.WAITING_FOR_USER) {
             sessionManager.updateState(userId, session.getSessionId(), SessionState.WAITING_FOR_USER, review.getMessage(), serialize(plan));
             result.setNextState(SessionState.WAITING_FOR_USER);
@@ -110,7 +121,7 @@ public class AgentOrchestrator {
         sessionManager.updateState(userId, session.getSessionId(), SessionState.EXECUTING, null, serialize(plan));
         List<String> outputs = new ArrayList<>();
         for (PlanStep step : plan.getSteps()) {
-            outputs.addAll(executeStep(userId, session, message, skills, shortTermMessages, memories, plan, step, outputs));
+            outputs.addAll(executeStep(userId, session, message, skills, shortTermMessages, memories, plan, step, outputs, requestId, traceId));
         }
         String response = String.join("\n", outputs);
         sessionManager.updateState(userId, session.getSessionId(), SessionState.COMPLETED, null, serialize(plan));
@@ -130,7 +141,9 @@ public class AgentOrchestrator {
                                      List<MemorySnippet> memories,
                                      Plan plan,
                                      PlanStep step,
-                                     List<String> priorOutputs) {
+                                     List<String> priorOutputs,
+                                     String requestId,
+                                     String traceId) {
         Plan singleStepPlan = new Plan();
         singleStepPlan.setRationale(plan.getRationale());
         PlanStep executionStep = copyStep(step);
@@ -149,7 +162,9 @@ public class AgentOrchestrator {
             shortTermMessages,
             memories,
             modelConfigService.resolve(userId, AgentType.EXECUTOR),
-            singleStepPlan);
+            singleStepPlan,
+            requestId,
+            traceId);
         AgentExecutionResult executionResult = executorAgentRegistry.getExecutor(step.getExecutorType()).execute(executionContext).join();
         step.setResult(executionStep.getResult());
         step.setError(executionStep.getError());
