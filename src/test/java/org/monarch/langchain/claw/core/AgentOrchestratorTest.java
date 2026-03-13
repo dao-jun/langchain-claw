@@ -1,18 +1,23 @@
 package org.monarch.langchain.claw.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 import org.monarch.langchain.claw.agent.AgentExecutionResult;
 import org.monarch.langchain.claw.common.SessionState;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.monarch.langchain.claw.session.SessionManager;
 
 @SpringBootTest
 class AgentOrchestratorTest {
 
     @Autowired
     private AgentOrchestrator orchestrator;
+
+    @Autowired
+    private SessionManager sessionManager;
 
     @Test
     void shouldExecuteMultiStepPlanWithBuiltinSkills() {
@@ -98,5 +103,24 @@ class AgentOrchestratorTest {
             .containsExactly("weather-1", "weather-2", "calculator-1");
         assertThat(result.getStepOutputs().get(3)).contains("基于已完成步骤结果：");
         assertThat(result.getStepOutputs().get(3)).contains("(25.0 + 25.0) / 2 = 25");
+    }
+
+    @Test
+    void shouldPersistPlanReviewedStateBeforeExecution() {
+        AgentExecutionResult result = orchestrator.process("user-h", null, "请计算 3+4");
+
+        assertThat(result.getNextState()).isEqualTo(SessionState.COMPLETED);
+        assertThat(sessionManager.find("user-h", result.getSessionId())).isPresent();
+        assertThat(sessionManager.find("user-h", result.getSessionId()).orElseThrow().getVersion()).isNotNull();
+    }
+
+    @Test
+    void shouldAllowNewPlanAfterCompletedSession() {
+        AgentExecutionResult first = orchestrator.process("user-i", null, "请计算 3+4");
+        AgentExecutionResult second = orchestrator.process("user-i", first.getSessionId(), "请计算 5+6");
+
+        assertThat(first.getNextState()).isEqualTo(SessionState.COMPLETED);
+        assertThat(second.getNextState()).isEqualTo(SessionState.COMPLETED);
+        assertThat(second.getMessage()).contains("11");
     }
 }

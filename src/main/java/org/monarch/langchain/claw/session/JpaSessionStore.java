@@ -29,15 +29,8 @@ public class JpaSessionStore implements SessionStore {
 
     @Override
     public UserSession save(UserSession session) {
-        UserSessionEntity entity = sessionRepository.findBySessionIdAndUserId(session.getSessionId(), session.getUserId())
-            .orElseGet(UserSessionEntity::new);
-        entity.setSessionId(session.getSessionId());
-        entity.setUserId(session.getUserId());
-        entity.setState(session.getState());
-        entity.setCurrentPlanJson(session.getCurrentPlanJson());
-        entity.setCurrentStepIndex(session.getCurrentStepIndex());
-        entity.setPendingQuestion(session.getPendingQuestion());
-        UserSessionEntity saved = sessionRepository.save(entity);
+        UserSessionEntity entity = toEntity(session);
+        UserSessionEntity saved = sessionRepository.saveAndFlush(entity);
         return toModel(saved);
     }
 
@@ -73,11 +66,13 @@ public class JpaSessionStore implements SessionStore {
 
     @Override
     public void updateState(String userId, String sessionId, SessionState state, String pendingQuestion, String currentPlanJson) {
-        UserSession session = getOrCreate(userId, sessionId);
-        session.setState(state);
-        session.setPendingQuestion(pendingQuestion);
-        session.setCurrentPlanJson(currentPlanJson);
-        save(session);
+        UserSessionEntity entity = sessionRepository.findBySessionIdAndUserId(sessionId, userId)
+            .orElseGet(() -> toEntity(newSession(userId, sessionId)));
+        SessionStateMachine.validate(sessionId, entity.getState(), state);
+        entity.setState(state);
+        entity.setPendingQuestion(pendingQuestion);
+        entity.setCurrentPlanJson(currentPlanJson);
+        sessionRepository.saveAndFlush(entity);
     }
 
     private UserSession newSession(String userId, String sessionId) {
@@ -93,14 +88,31 @@ public class JpaSessionStore implements SessionStore {
 
     private UserSession toModel(UserSessionEntity entity) {
         UserSession session = new UserSession();
+        session.setId(entity.getId());
         session.setSessionId(entity.getSessionId());
         session.setUserId(entity.getUserId());
         session.setState(entity.getState());
         session.setCurrentPlanJson(entity.getCurrentPlanJson());
         session.setCurrentStepIndex(entity.getCurrentStepIndex());
         session.setPendingQuestion(entity.getPendingQuestion());
+        session.setVersion(entity.getVersion());
         session.setCreatedAt(entity.getCreatedAt());
         session.setUpdatedAt(entity.getUpdatedAt());
         return session;
+    }
+
+    private UserSessionEntity toEntity(UserSession session) {
+        UserSessionEntity entity = new UserSessionEntity();
+        entity.setId(session.getId());
+        entity.setVersion(session.getVersion());
+        entity.setSessionId(session.getSessionId());
+        entity.setUserId(session.getUserId());
+        entity.setState(session.getState());
+        entity.setCurrentPlanJson(session.getCurrentPlanJson());
+        entity.setCurrentStepIndex(session.getCurrentStepIndex());
+        entity.setPendingQuestion(session.getPendingQuestion());
+        entity.setCreatedAt(session.getCreatedAt());
+        entity.setUpdatedAt(session.getUpdatedAt());
+        return entity;
     }
 }

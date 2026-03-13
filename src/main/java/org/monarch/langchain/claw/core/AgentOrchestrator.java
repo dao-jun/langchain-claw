@@ -109,6 +109,9 @@ public class AgentOrchestrator {
             requestId,
             traceId);
         AgentExecutionResult review = reviewAgent.execute(reviewContext).join();
+        if (review.getNextState() == SessionState.PLAN_REVIEWED) {
+            sessionManager.updateState(userId, session.getSessionId(), SessionState.PLAN_REVIEWED, null, serialize(plan));
+        }
 
         AgentExecutionResult result = new AgentExecutionResult();
         result.setSessionId(session.getSessionId());
@@ -131,7 +134,13 @@ public class AgentOrchestrator {
         }
 
         sessionManager.updateState(userId, session.getSessionId(), SessionState.EXECUTING, null, serialize(plan));
-        List<String> outputs = executePlan(userId, session, message, skills, shortTermMessages, memories, plan, requestId, traceId);
+        List<String> outputs;
+        try {
+            outputs = executePlan(userId, session, message, skills, shortTermMessages, memories, plan, requestId, traceId);
+        } catch (RuntimeException ex) {
+            sessionManager.updateState(userId, session.getSessionId(), SessionState.FAILED, ex.getMessage(), serialize(plan));
+            throw ex;
+        }
         String response = String.join("\n", outputs);
         sessionManager.updateState(userId, session.getSessionId(), SessionState.COMPLETED, null, serialize(plan));
         sessionManager.appendMessage(session.getSessionId(), "assistant", response);
