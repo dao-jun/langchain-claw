@@ -18,6 +18,7 @@
 - 已具备 builtin skills
 - 已具备 ToolRegistry 与多 Executor 路由
 - 已支持 calculator / weather / conversation 等基础工具能力
+- 已支持在非 `rule-based` executor 模型下，通过 LangChain4j tool-calling 执行 calculator / weather 步骤，同时保留直接工具调用 fallback
 
 ### 1.3 近期增强
 - planner 已支持更丰富的多步骤规划：
