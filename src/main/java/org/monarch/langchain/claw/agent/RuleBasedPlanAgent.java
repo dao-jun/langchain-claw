@@ -12,6 +12,16 @@ import org.springframework.stereotype.Component;
 @Component
 public class RuleBasedPlanAgent implements PlanAgent {
 
+    @Override
+    public String getName() {
+        return "ruleBasedPlanAgent";
+    }
+
+    @Override
+    public String getDescription() {
+        return "使用规则从用户消息中生成可执行计划。";
+    }
+
     private static final Pattern CALCULATION_EXPRESSION_PATTERN = Pattern.compile("([0-9()\\s+\\-*/.]+)");
     private static final Pattern WEATHER_CITY_PATTERN = Pattern.compile("(?:天气|weather)(?:是|怎么样|如何|查询)?([\\u4e00-\\u9fa5A-Za-z]+)?");
 

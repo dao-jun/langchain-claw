@@ -14,6 +14,16 @@ public class RuleBasedReviewAgent implements ReviewAgent {
     }
 
     @Override
+    public String getName() {
+        return "ruleBasedReviewAgent";
+    }
+
+    @Override
+    public String getDescription() {
+        return "使用规则校验计划是否具备所需 skills 和必要参数。";
+    }
+
+    @Override
     public ReviewResult review(AgentContext context) {
         for (PlanStep step : context.getPlan().getSteps()) {
             for (String skillName : step.getRequiredSkills()) {

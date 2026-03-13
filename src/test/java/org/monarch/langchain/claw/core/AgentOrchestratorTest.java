@@ -21,8 +21,8 @@ class AgentOrchestratorTest {
         assertThat(result.getNextState()).isEqualTo(SessionState.COMPLETED);
         assertThat(result.getPlan()).isNotNull();
         assertThat(result.getPlan().getSteps()).hasSize(2);
-        assertThat(result.getStepOutputs()).anyMatch(output -> output.contains("14"));
-        assertThat(result.getStepOutputs()).anyMatch(output -> output.contains("北京"));
+        assertThat(result.getStepOutputs()).contains("2+3*4 = 14");
+        assertThat(result.getStepOutputs()).contains("北京 当前天气：晴，25°C（演示数据，可替换为真实天气 API）");
     }
 
     @Test
