@@ -5,12 +5,15 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.monarch.langchain.claw.common.PlanStep;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 public class StepResultMapper {
 
     private static final Pattern WEATHER_TEMPERATURE_PATTERN = Pattern.compile("(-?\\d+(?:\\.\\d+)?)°C");
+    private static final Logger log = LoggerFactory.getLogger(StepResultMapper.class);
 
     public Map<String, Object> map(PlanStep step, Map<String, Object> resolvedParameters, String outputText) {
         Map<String, Object> output = new LinkedHashMap<>();
@@ -34,8 +37,8 @@ public class StepResultMapper {
         output.put("renderedResult", rendered);
         try {
             output.put("numericValue", Double.parseDouble(rendered));
-        } catch (NumberFormatException ignored) {
-            // Ignore when calculator output is not numeric.
+        } catch (NumberFormatException ex) {
+            log.debug("Failed to parse calculator output as numeric value. outputText={}", outputText, ex);
         }
     }
 

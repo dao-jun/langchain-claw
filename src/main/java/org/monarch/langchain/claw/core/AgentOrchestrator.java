@@ -269,7 +269,23 @@ public class AgentOrchestrator {
         return pendingSteps.stream()
             .filter(step -> completedSteps.keySet().containsAll(step.getDependsOn()))
             .findFirst()
-            .orElseThrow(() -> new IllegalStateException("Plan contains unresolved or cyclic step dependencies."));
+            .orElseThrow(() -> new IllegalStateException(buildDependencyErrorMessage(pendingSteps, completedSteps)));
+    }
+
+    private String buildDependencyErrorMessage(List<PlanStep> pendingSteps, Map<String, StepExecutionResult> completedSteps) {
+        List<String> completedStepIds = new ArrayList<>(completedSteps.keySet());
+        List<String> unresolvedDetails = pendingSteps.stream()
+            .map(step -> {
+                List<String> missingDependencies = step.getDependsOn().stream()
+                    .filter(dependencyId -> !completedSteps.containsKey(dependencyId))
+                    .toList();
+                return step.getStepId() + " missing " + missingDependencies;
+            })
+            .toList();
+        return "Plan contains unresolved or cyclic step dependencies. completed="
+            + completedStepIds
+            + ", pending="
+            + unresolvedDetails;
     }
 
     private StepExecutionContext createStepContext(PlanStep step,
