@@ -1,0 +1,7 @@
+name: conversation
+version: 1.0.0
+description: 通用对话技能
+executorType: conversation
+tools:
+  - conversation
+promptFile: prompt.md

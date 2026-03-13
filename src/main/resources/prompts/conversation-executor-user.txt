@@ -1,0 +1,25 @@
+skill prompt:
+{{skillPrompt}}
+
+用户消息：
+{{userMessage}}
+
+解析后的步骤参数（JSON）：
+{{resolvedParametersJson}}
+
+短期会话消息（JSON）：
+{{shortTermMessagesJson}}
+
+长期记忆（JSON）：
+{{memoriesJson}}
+
+已完成步骤输出（JSON）：
+{{priorStepOutputsJson}}
+
+依赖步骤文本输出（JSON）：
+{{dependencyStepOutputsJson}}
+
+依赖步骤结构化输出（JSON）：
+{{dependencyOutputsJson}}
+
+请直接输出最终回复文本。

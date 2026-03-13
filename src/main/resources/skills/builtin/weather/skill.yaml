@@ -1,0 +1,7 @@
+name: weather
+version: 1.0.0
+description: 查询天气信息
+executorType: weather
+tools:
+  - weather
+promptFile: prompt.md

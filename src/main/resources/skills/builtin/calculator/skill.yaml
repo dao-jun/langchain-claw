@@ -1,0 +1,7 @@
+name: calculator
+version: 1.0.0
+description: 执行算术表达式计算
+executorType: calculator
+tools:
+  - calculator
+promptFile: prompt.md

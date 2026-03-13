@@ -1,0 +1,10 @@
+用户消息：
+{{userMessage}}
+
+可用 skills（JSON）：
+{{skillsJson}}
+
+待审核 plan（JSON）：
+{{planJson}}
+
+请直接输出 review JSON。

@@ -1,0 +1,95 @@
+# Agent内核特性进度跟踪（v1.1）
+
+> 日期: 2026-03-13  
+> 目的: 记录**已实现能力**与**后续特性优先级**，避免实现过程中只盯着当前代码而遗忘设计文档中的后续能力。
+
+---
+
+## 1. 已完成的核心能力
+
+### 1.1 Agent 主链路
+- Plan / Review / Executor 三段式主流程已落地
+- 支持多轮会话与 `WAITING_FOR_USER`
+- 支持同一 Session 串行执行，避免同 Session 并发乱序
+- 已支持按用户模型配置切换到 LangChain4j LLM 版本的 PlanAgent / ReviewAgent / conversation ExecutorAgent
+- 默认仍保留 rule-based fallback，便于测试、离线运行与降级
+
+### 1.2 基础 Skills / Tools
+- 已具备 builtin skills
+- 已具备 ToolRegistry 与多 Executor 路由
+- 已支持 calculator / weather / conversation 等基础工具能力
+- 已支持在非 `rule-based` executor 模型下，通过 LangChain4j tool-calling 执行 calculator / weather 步骤，同时保留直接工具调用 fallback
+
+### 1.3 近期增强
+- planner 已支持更丰富的多步骤规划：
+  - 多城市天气拆分
+  - 任务 + 解释的混合步骤
+  - 等待用户补参数后恢复原计划
+- 新增链式任务执行基础能力：
+  - stepId / dependsOn / inputBindings
+  - 结构化步骤输出（如天气温度、计算结果）
+  - 支持“先查多个城市天气，再计算平均温度，再继续解释”的依赖执行
+- 新增 `/chat` 请求幂等能力：
+  - 以 `userId + requestId` 作为幂等键
+  - 对相同请求回放首次响应，避免重复执行 agent/tool 链路
+  - 对相同 requestId 但不同请求体返回冲突，防止错误复用
+- 新增工具调用审计能力：
+  - 记录 userId / sessionId / requestId / traceId
+  - 记录 tool 输入、输出、错误与耗时
+  - 可通过审计接口查询指定 session 的最近工具调用
+
+---
+
+## 2. 仍需关注、尚未完成的特性
+
+以下能力在设计文档和评审意见中都属于重要特性，后续实现时不能遗忘：
+
+1. **认证与授权**
+   - 从 `X-User-Id` 演示模式升级到 JWT / OAuth2
+   - 明确谁能装 Skill、谁能切模型、谁能恢复 Session
+
+2. **请求幂等与数据库一致性**
+   - 已实现：`/chat` 请求幂等键与响应回放
+   - 已实现：Session 乐观锁（`version`）与状态转换约束
+   - 仍可继续增强：跨实例补偿 / 更细粒度状态恢复策略
+
+3. **长期记忆增强**
+   - pgvector / 语义检索
+   - 更接近设计目标的长期记忆能力
+
+4. **用户 Skill 安全边界**
+   - 默认拒绝权限模型
+   - 进程级/容器级隔离
+   - 审批、签名、来源治理
+
+5. **模型治理**
+    - 预算、限流、fallback、审计
+    - 已部分实现：当 provider 配为 `zhipu` 时，可通过用户级模型配置切到真实 ChatLanguageModel
+
+6. **更高级的 Agent 编排**
+    - 已实现：按 plan 顺序与依赖关系执行多步骤任务
+    - 已实现：通过 `inputBindings` 将前序步骤结构化结果注入后续步骤参数
+    - 已实现：`conversation` 步骤可读取前序/依赖步骤输出并基于结果继续回答
+    - 已实现：步骤级 retry / fallback / compensation 恢复逻辑
+    - 已实现：`condition` 条件执行，未命中时将步骤标记为 `SKIPPED`
+    - 已实现：同一批依赖已满足的步骤并行调度，并按 plan 顺序汇总结果
+    - 仍可继续增强：跨实例恢复补偿
+
+7. **延后能力（Phase 2/3）**
+   - 远程 Skill 仓库
+   - Session 分支 / 合并 / 分享
+   - 复杂 Skill 依赖解析
+
+---
+
+## 3. 建议的下一步优先级
+
+如果目标是继续把系统做成“强大的 agent 工具”，建议优先级如下：
+
+1. **请求幂等 + Session 一致性**
+2. **认证授权**
+3. **长期记忆增强**
+4. **步骤依赖与链式执行**
+5. **用户 Skill 安全沙箱**
+
+这样可以在不失控扩范围的前提下，持续朝设计文档中的完整目标演进。

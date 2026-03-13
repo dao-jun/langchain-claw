@@ -1,0 +1,19 @@
+executorType:
+{{executorType}}
+
+skill prompt:
+{{skillPrompt}}
+
+用户消息：
+{{userMessage}}
+
+已解析参数（JSON）：
+{{resolvedParametersJson}}
+
+已完成步骤文本输出（JSON）：
+{{priorStepOutputsJson}}
+
+依赖步骤结构化输出（JSON）：
+{{dependencyOutputsJson}}
+
+请调用合适工具，并最终输出工具结果文本。

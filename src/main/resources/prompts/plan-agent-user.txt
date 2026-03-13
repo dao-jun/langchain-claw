@@ -1,0 +1,16 @@
+用户消息：
+{{userMessage}}
+
+可用 skills（JSON）：
+{{skillsJson}}
+
+短期会话消息（JSON）：
+{{shortTermMessagesJson}}
+
+长期记忆（JSON）：
+{{memoriesJson}}
+
+待恢复 plan（若为空表示无待恢复计划）：
+{{pendingPlanJson}}
+
+请直接输出 plan JSON。
